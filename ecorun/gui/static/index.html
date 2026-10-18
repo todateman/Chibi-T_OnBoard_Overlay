@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ecorun レイアウトエディタ</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>ecorun レイアウト</h1>
+  <label class="preset">プリセット
+    <select id="presetSel" title="presets/*.toml"></select>
+  </label>
+  <span id="dirty" class="dirty" hidden>● 未保存</span>
+  <button id="btnSave" title="保存 (⌘/Ctrl+S)">保存</button>
+  <button id="btnSaveAs">別名で保存…</button>
+  <button id="btnRevert" title="ファイルの内容に戻す">再読込</button>
+  <button id="btnDeletePreset" class="danger">削除…</button>
+  <span class="sep"></span>
+  <button id="btnUndo" title="元に戻す (⌘/Ctrl+Z)">↶ 元に戻す</button>
+  <button id="btnRedo" title="やり直す (⌘/Ctrl+Shift+Z)">↷ やり直す</button>
+  <span id="status" class="status"></span>
+  <a class="api" href="/docs" target="_blank" rel="noopener">API</a>
+</header>
+<div id="banner" class="banner" hidden></div>
+
+<main>
+  <aside id="left">
+    <div class="section-title">ウィジェット <small>(下ほど前面)</small></div>
+    <button id="btnGlobal" class="global-item">全体設定(配色・閾値・配置禁止帯)</button>
+    <ul id="widgetList"></ul>
+    <div class="row">
+      <select id="addType" title="追加するウィジェットの種類"></select>
+      <button id="btnAdd">追加</button>
+    </div>
+    <div class="row">
+      <button id="btnDup" title="⌘/Ctrl+D">複製</button>
+      <button id="btnUp" title="前面へ">前面へ</button>
+      <button id="btnDown" title="背面へ">背面へ</button>
+      <button id="btnRemove" class="danger" title="Delete">削除</button>
+    </div>
+    <p class="hint">
+      ドラッグで移動、四隅・辺でリサイズ(ゲージは正方形を保つ。Shift で縦横比固定)。
+      矢印キーで 1 px、Shift+矢印で 10 px 動かす。
+    </p>
+  </aside>
+
+  <section id="center">
+    <div id="toolbar">
+      <label>スナップ
+        <select id="snapSel">
+          <option value="1">なし</option><option value="5">5 px</option>
+          <option value="10" selected>10 px</option><option value="20">20 px</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="chkKeepout" checked> 配置禁止帯</label>
+      <label><input type="checkbox" id="chkBoxes" checked> 枠</label>
+      <label><input type="checkbox" id="chkDisabled"> 非表示の枠も出す</label>
+      <span id="coords" class="coords"></span>
+    </div>
+    <div id="stageWrap">
+      <div id="stage">
+        <img id="bgImg" alt="" hidden>
+        <img id="ovImg" alt="">
+        <svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div id="stageMsg" class="stage-msg" hidden></div>
+      </div>
+    </div>
+    <div id="timeline">
+      <div class="row">
+        <label class="grow">ログ
+          <input id="csvInput" list="csvList" placeholder="sampledata/LOG0650.CSV">
+          <datalist id="csvList"></datalist>
+        </label>
+        <label>同期 (--sync)
+          <input id="syncInput" placeholder="15:12:20 / 秒" size="10">
+        </label>
+        <label>微調整 (--offset)
+          <input id="offsetInput" type="number" step="0.1" value="0" size="6">
+        </label>
+        <label>長さ (--duration)
+          <input id="durationInput" type="number" step="1" min="0" placeholder="末尾まで" size="7">
+        </label>
+      </div>
+      <div class="row">
+        <label class="grow">動画(任意・背景に表示)
+          <input id="videoInput" placeholder="/path/to/onboard.mp4">
+        </label>
+        <button id="btnVideo">読込</button>
+        <button id="btnVideoClear">外す</button>
+        <span id="videoInfo" class="muted"></span>
+      </div>
+      <div class="row">
+        <button id="btnPlay" title="再生 / 停止">▶</button>
+        <input id="timeSlider" type="range" min="0" max="100" step="0.1" value="0" class="grow">
+        <span id="timeLabel" class="mono"></span>
+        <input id="timeInput" type="number" step="0.1" size="7" title="スライダーの秒(動画があれば動画の秒、無ければログ秒)">
+      </div>
+    </div>
+  </section>
+
+  <aside id="right">
+    <div id="props"></div>
+  </aside>
+</main>
+
+<footer>
+  <div class="issues">
+    <div class="section-title">検査結果 <small>(ecorun-layout lint と同じ)</small></div>
+    <ul id="issues"></ul>
+  </div>
+  <div class="cmd">
+    <div class="section-title">コマンド <button id="btnCopy" class="small">コピー</button>
+      <small id="cmdNote"></small></div>
+    <pre id="cmd"></pre>
+  </div>
+</footer>
+
+<dialog id="dlg">
+  <form method="dialog">
+    <p id="dlgMsg"></p>
+    <input id="dlgInput" hidden>
+    <div class="row end">
+      <button value="cancel" formnovalidate>キャンセル</button>
+      <button id="dlgOk" value="ok" class="primary">OK</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>

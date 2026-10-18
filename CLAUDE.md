@@ -4,18 +4,30 @@ Claude Code がこのリポジトリで作業するときの前提情報。
 
 ## 概要
 
-`ecorun_overlay.py` は、Honda エコマイレッジチャレンジ(チーム: ちびTインターナショナル)の車両ロガー CSV を、車載カメラ映像にオーバーレイする単一ファイルの Python スクリプト。使い方とログ仕様は README.md を参照。
+Honda エコマイレッジチャレンジ(チーム: ちびTインターナショナル)の車両ロガー CSV を、車載カメラ映像にオーバーレイするツール。`ecorun` パッケージに実体があり、`ecorun_overlay.py` は後方互換のラッパ。使い方とログ仕様は README.md を参照。実行は `uv run ...`。
 
 ## 構成
 
-- `load_log()` : CSV 読込 → 列名を `COL` の内部キー(`speed`, `rpm`, `fuel_p` など)へ変換 → 経過秒 `t` の配列、GPS 未測位の補完、`smooth_held()` で同値の連続を間引き、方位算出、ラップ開始時刻・エンジンON区間の抽出 → `Telemetry`
-- `OverlayRenderer`
-  - `_build_static()` : 毎フレーム共通の静的レイヤ(パネル、コース図、ゲージ目盛り、速度グラフ全体)を 1 回だけ生成
-  - `render(ts)` : ログ秒 `ts` における 1920×1080 RGBA フレームを返す(静的レイヤのコピーに動的要素を描画)
-  - 標高グラフは出力区間全体を静的レイヤに描きカーソルだけ動かす。燃圧グラフは直近 `FUEL_P_WINDOW_S` 秒を毎フレーム描き直す
-- `main()` : RGBA の raw フレームを stdin パイプで ffmpeg に渡す
-  - `--video` あり : `overlay` フィルタで合成して H.264 を出力
-  - `.mov` : ProRes 4444(アルファ付き)を出力
+- `ecorun/telemetry.py` : `load_log()` で CSV 読込 → 列名を `COL` の内部キー(`speed`, `rpm`, `fuel_p` など)へ変換 → 経過秒 `t` の配列、GPS 未測位の補完、`smooth_held()` で同値の連続を間引き、方位算出、ラップ開始時刻・エンジンON区間の抽出 → `Telemetry`
+- `ecorun/config.py` : レイアウトプリセット(TOML)の pydantic モデル。**これが唯一の仕様**で、`schema/preset.schema.json`・GUI のフォーム・`ecorun-layout widgets`・API の OpenAPI はここから生成される。読込(tomllib)と保存(tomlkit でコメント・並びを保持)
+- `ecorun/widgets.py` : ウィジェットの描画実装(`IMPLS` が type → クラス)。各ウィジェットは自分の box(x, y, w, h)の内側だけに描く
+  - `static(img)` : パネル・目盛り・区間全体のグラフなど毎フレーム共通の部分。1 回だけ呼ばれる
+  - `dynamic(img, ts)` : ログ秒 `ts` の値に依存する部分
+  - 文字サイズ・余白は基準サイズ(モデルの `REF`)での値を書き、`self.S()` / `self.F()` / `self.T()` で拡縮する。ゲージは基準半径 180
+- `ecorun/render.py` : `OverlayRenderer` が全ウィジェットの static を重ねた静的レイヤを作り、`render(ts)` でそのコピーに dynamic を順に描いて 1920×1080 RGBA を返す。`debug_boxes` で枠と id を描く
+- `ecorun/video.py` : ffprobe、RGBA の raw フレームを stdin パイプで ffmpeg に渡す(`--video` ありなら overlay フィルタで合成して H.264、`.mov` なら ProRes 4444)、1 フレーム抽出
+- `ecorun/cli.py` : `ecorun-overlay`(従来の CLI + `--preset` / `--debug-boxes`)
+- `ecorun/layout.py` : `ecorun-layout`(list / widgets / schema / validate / lint)。lint のルールもここ
+- `ecorun/gui/server.py` + `static/` : `ecorun-gui`。FastAPI + ビルド不要の素の JS。プレビューは `/api/render` で本番と同じ描画。`/api/events`(SSE)で presets/ の外部変更を通知
+- `presets/*.toml` : default / f9_mask / minimal
+- `tests/` : pytest。合成ログ(`conftest.py`)を使うので sampledata が無くても動く
+
+### ウィジェットを追加・変更するとき
+
+1. `config.py` にモデル(`type` の Literal、x/y/w/h の既定値、`REF`、各フィールドの title / description / 範囲)を足し、`WIDGET_MODELS` に登録
+2. `widgets.py` に描画クラスを足し、`IMPLS` に登録
+3. `uv run ecorun-layout schema --write` で JSON Schema を更新
+4. `uv run pytest`(box の外に描いていないか、拡縮しても崩れないかを全型で検査する)
 
 ## データの特性
 
@@ -40,20 +52,27 @@ Claude Code がこのリポジトリで作業するときの前提情報。
 
 ## レイアウトの方針(VSYSTO F9 ドラレコ、1920×1080、ローアングル前方カメラ)
 
-- 地平線付近の帯(y≈380〜640)はコース前方・マーシャル・前走車が映るので、何も置かない
+- 地平線付近の帯(y≈380〜640)はコース前方・マーシャル・前走車が映るので、何も置かない → 各プリセットの `[[keepout]]` に入れてあり、`ecorun-layout lint` が重なりを警告する
 - 映像の下半分はほぼ路面なので、ゲージ類はここに集める。標高グラフは左下、燃圧グラフは右下(回転計の隣)
-- 右下の焼き込み表示(日時・機種名・速度)はおよそ x 1140〜1720、y 1000〜1040 の位置にある → `--mask-osd` で `OSD_MASK_BOX` の帯を敷いて隠す
-- 座標はすべて 1920×1080 基準で書く。出力時に ffmpeg で動画解像度へスケールされる
+- 右下の焼き込み表示(日時・機種名・速度)はおよそ x 1140〜1720、y 1000〜1040 の位置にある → `f9_mask` プリセットの `mask` ウィジェットで隠す
+- 座標はすべて canvas(1920×1080)基準で書く。出力時に ffmpeg で動画解像度へスケールされる
 
 ## 開発時の確認方法
 
+レイアウトを変えるときは、GUI(`uv run ecorun-gui`)を使うか、`presets/*.toml` を直接編集する。直接編集したら次の順で確認する(GUI を開いていれば自動で再読込される)。
+
 ```bash
-# 静止画で見た目を確認(ログ秒を指定)
-python ecorun_overlay.py sampledata/LOG0650.CSV --preview 150 -o preview.png
-python ecorun_overlay.py sampledata/LOG0612.CSV --preview 1040 -o preview_old.png  # 旧フォーマット
+uv run ecorun-layout widgets speed_gauge          # 使えるパラメータと範囲
+uv run ecorun-layout validate default             # スキーマ検証(未知キー・範囲・id 重複)
+uv run ecorun-layout lint default --json          # はみ出し・配置禁止帯・重なり
+# 静止画で見た目を確認(ログ秒を指定)。--debug-boxes で枠と id が出る
+uv run ecorun-overlay sampledata/LOG0650.CSV --preset default --preview 150 --debug-boxes -o preview.png
+uv run ecorun-overlay sampledata/LOG0612.CSV --preview 1040 -o preview_old.png  # 旧フォーマット
 
 # 短い区間で合成・同期を確認
-python ecorun_overlay.py sampledata/LOG0650.CSV --video sample.mp4 --sync 15:12:20 --duration 10 --mask-osd -o test.mp4
+uv run ecorun-overlay sampledata/LOG0650.CSV --preset f9_mask --video sample.mp4 --sync 15:12:20 --duration 10 -o test.mp4
+
+uv run pytest
 ```
 
 描画を変更したら、必ずプレビュー画像を生成して目視で確認する。
@@ -62,5 +81,5 @@ python ecorun_overlay.py sampledata/LOG0650.CSV --video sample.mp4 --sync 15:12:
 
 - 描画の高速化(クラウド環境で約 13 fps、Apple Silicon Mac で約 50 fps)。候補: 動的要素の部分領域だけ再描画する、multiprocessing でフレームを並列生成する、pycairo へ移行する
 - 同期の半自動化: 動画のオプティカルフロー、またはドラレコ焼き込み速度の OCR から発進点を検出し、ログと突き合わせる
-- 設定を外部ファイル(YAML / TOML)に分離し、レイアウトプリセットを切り替えられるようにする
+- GUI: 配置禁止帯をキャンバス上でドラッグ編集できるようにする、複数ウィジェットの同時選択・整列
 - 勾配の表示(標高はグラフ表示済み。GPS 標高は 0.1 m 刻みで揺れるので平滑化が必要)
