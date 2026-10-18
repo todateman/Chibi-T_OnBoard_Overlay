@@ -1,7 +1,7 @@
 # ecorun_overlay
 
 Honda エコマイレッジチャレンジ用の車載動画テレメトリ・オーバーレイ生成ツール。
-Chibi-T ロガーの CSV を読み込み、速度・回転数(エンジン ON / COAST)・燃費・ラップタイム・方位・コース図などを車載カメラ映像に重ねる。
+Chibi-T ロガーの CSV を読み込み、速度・回転数(エンジン ON / COAST)・燃費・ラップタイム・方位・コース図・標高・燃圧などを車載カメラ映像に重ねる。
 
 ![preview](docs/preview.png)
 
@@ -11,7 +11,8 @@ Chibi-T ロガーの CSV を読み込み、速度・回転数(エンジン ON / 
 - **燃費・積算燃料・走行距離**: 距離が短い間の不安定な燃費値は `---` で非表示
 - **ラップタイム**: `ラップ数` 列の切り替わりから現在周・前周タイムを算出
 - **方位**: GPS 座標の移動ベクトルから算出(低速時は直前値を保持)
-- **滑らかな補間**: 約 1 Hz のログを動画フレームレートへ線形補間
+- **標高・燃圧グラフ**: 標高は出力区間全体のプロファイル、燃圧は直近 60 秒をスクロール表示(エンジン ON 帯付き)
+- **10 Hz / 1 Hz ログ対応**: 現行の 10 Hz フォーマットと旧 1 Hz フォーマットの列名を自動判別。センサ更新の間に同じ値が続く部分は間引いてから動画フレームレートへ線形補間
 - **ドラレコ焼き込み表示のマスク**: VSYSTO F9 の日時・速度表示を `--mask-osd` で隠す
 - **3 つの出力モード**: 静止画プレビュー / 動画へ直接合成 / 透過 ProRes 4444(編集ソフトで重ねる用)
 
@@ -30,7 +31,7 @@ pip install -r requirements.txt
 ### 1. 静止画でレイアウトを確認
 
 ```bash
-python ecorun_overlay.py LOG0612.CSV --preview 900 -o preview.png
+python ecorun_overlay.py LOG0650.CSV --preview 150 -o preview.png
 ```
 
 `--preview` はログ開始からの秒数。グレー背景に 1 フレーム描画する。
@@ -38,7 +39,7 @@ python ecorun_overlay.py LOG0612.CSV --preview 900 -o preview.png
 ### 2. 車載動画に直接合成
 
 ```bash
-python ecorun_overlay.py LOG0612.CSV --video F9_0001.mp4 --sync 11:16:50 --mask-osd -o out.mp4
+python ecorun_overlay.py LOG0650.CSV --video F9_0001.mp4 --sync 15:10:30 --mask-osd -o out.mp4
 ```
 
 - 出力は H.264(`--crf` で画質指定、既定 18)。音声はコピーされる
@@ -48,7 +49,7 @@ python ecorun_overlay.py LOG0612.CSV --video F9_0001.mp4 --sync 11:16:50 --mask-
 ### 3. 透過オーバーレイだけを書き出す
 
 ```bash
-python ecorun_overlay.py LOG0612.CSV --sync 11:16:50 --duration 1300 -o overlay.mov
+python ecorun_overlay.py LOG0650.CSV --sync 15:10:30 --duration 1300 -o overlay.mov
 ```
 
 ProRes 4444(アルファ付き)を出力する。DaVinci Resolve や Premiere で映像の上に重ねて使う。
@@ -80,23 +81,25 @@ ProRes 4444(アルファ付き)を出力する。DaVinci Resolve や Premiere �
 
 ## ログフォーマット
 
-UTF-8(BOM 付き可)の CSV。列名はスクリプト冒頭の `COL` 辞書で対応付けている。
+UTF-8(BOM 付き可)の CSV。列名はスクリプト冒頭の `COL` 辞書で内部キーに対応付けており、現行フォーマット(10 Hz、LOG0650 以降)と旧フォーマット(1 Hz、LOG0612 など)のどちらも読める。
 
-| 列名 | 単位・内容 | 用途 |
+| 列名(現行 / 旧) | 単位・内容 | 用途 |
 |---|---|---|
 | 記録日時 | `YYYY/M/D HH:MM:SS.ff` | 時間軸 |
 | 速度(km/h) | km/h | 速度ゲージ・グラフ |
-| ラップ数 | 整数(スタート前は 0) | ラップ表示・ラップタイム |
-| 走行時間 | 秒 | 走行時間表示 |
-| 回転数 | rpm(0 = エンジン停止) | 回転ゲージ・ENGINE ON 判定 |
-| 走行距離 | m | 距離表示 |
-| 積算燃料 | cc | 燃料表示 |
-| 燃費 | km/L | 燃費表示 |
-| lat / lon | 度(未測位時は 0) | コース図・方位 |
-| alt | m | (未使用) |
-| loc | 文字列 | (未使用) |
-| 温度 | ℃(エンジン温度) | 環境表示 |
+| ラップ数(周目) / ラップ数 | 整数(スタート前は 0) | ラップ表示・ラップタイム |
+| 走行時間(秒) / 走行時間 | 秒 | 走行時間表示 |
+| 回転数(rpm) / 回転数 | rpm(0 = エンジン停止) | 回転ゲージ・ENGINE ON 判定 |
+| 走行距離積算(m) / 走行距離 | m | 距離表示 |
+| 積算燃料消費量(ml) / 積算燃料 | ml | 燃料表示 |
+| 燃費(km/l) / 燃費 | km/L | 燃費表示 |
+| lat(緯度) / lat、lng(経度) / lon | 度(未測位時は 0) | コース図・方位 |
+| 標高(m) / alt | m | 標高グラフ |
+| 温度(C) / 温度 | ℃(エンジン温度) | 環境表示 |
 | 気圧(kPa) / 気温(C) / 湿度(%) | — | 環境表示 |
+| 燃圧(MPa) | MPa(現行のみ) | 燃圧グラフ(列が無ければ非表示) |
+
+次の列は読み込むが表示しない: 燃料噴射時間(ms)、点火進角角度(CA)、燃料噴射終了角度(CA)、場所 / loc、1次空気圧(MPa)、2次空気圧(MPa)。
 
 ## カスタマイズ
 
@@ -109,8 +112,12 @@ UTF-8(BOM 付き可)の CSV。列名はスクリプト冒頭の `COL` 辞書で�
 | `RPM_ON_THRESHOLD` | ENGINE ON とみなす回転数 |
 | `FUEL_ECO_MIN_DIST_M` | 燃費を表示し始める距離 |
 | `LAP_TOTAL` | 総周回数(`LAP 2/3` 表示にする場合) |
+| `ALT_COL`, `FUEL_P_COL` | 標高・燃圧グラフの色 |
+| `ALT_MIN_SPAN_M` | 標高グラフの縦軸の最小幅(GPS 標高の揺れを誇張しない) |
+| `FUEL_P_MAX`, `FUEL_P_WINDOW_S` | 燃圧グラフの上限と表示する秒数 |
+| `HEADING_LOOKBACK_S` | 方位を求めるときに何秒前の位置と比べるか |
 | `OSD_MASK_BOX` | ドラレコ焼き込み表示を隠す領域(1920×1080 基準) |
-| `COL` | CSV の列名の対応 |
+| `COL`, `OPTIONAL_COLS` | CSV の列名の対応(候補を複数書ける)と、無くてもよい列 |
 
 パネルやゲージの位置は `OverlayRenderer.__init__` のレイアウト定義で変更する。
 
