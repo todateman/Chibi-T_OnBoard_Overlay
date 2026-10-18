@@ -10,10 +10,13 @@
   # 3) 5 分ごとに分割された動画を連結して合成(複数ファイル・フォルダ可。ファイル名順に連結)
   ecorun-overlay LOG0650.CSV --preset f9_mask --video F9/ --sync 15:10:30 -o out.mp4
 
-  # 4) 透過オーバーレイだけを書き出し(DaVinci Resolve / Premiere で重ねる)
+  # 4) 動画の 1:35〜21:40 だけを書き出す(位置は連結後の動画の再生位置)
+  ecorun-overlay LOG0650.CSV --preset f9_mask --video F9/ --sync 15:10:30 --start 1:35 --end 21:40 -o out.mp4
+
+  # 5) 透過オーバーレイだけを書き出し(DaVinci Resolve / Premiere で重ねる)
   ecorun-overlay LOG0650.CSV --sync 15:10:30 --duration 1200 -o overlay.mov
 
-  # 5) オーバーレイなしで連結だけ(再エンコードなし)
+  # 6) オーバーレイなしで連結だけ(再エンコードなし)
   ecorun-overlay --concat-only --video F9/*.MP4 -o joined.mp4
 """
 from __future__ import annotations
@@ -30,6 +33,37 @@ from .video import VideoError, probe_videos
 FPS_DEFAULT = 30
 
 
+def parse_position(s: str) -> float:
+    """動画の再生位置: 秒(95.5)または [H:]MM:SS[.f](1:35、0:21:40.5) → 秒"""
+    try:
+        parts = [float(x) for x in s.strip().split(":")]
+    except ValueError:
+        parts = []
+    if not 1 <= len(parts) <= 3 or any(x < 0 for x in parts) or any(x >= 60 for x in parts[1:]):
+        raise argparse.ArgumentTypeError(f"再生位置は 秒 か [H:]MM:SS[.f] で指定してください: {s!r}")
+    sec = 0.0
+    for x in parts:
+        sec = sec * 60 + x
+    return sec
+
+
+def resolve_range(start: float | None, end: float | None, duration: float | None,
+                  total: float, clamp: bool) -> tuple[float, float]:
+    """--start / --end / --duration → (開始位置, 長さ)。位置は動画 0 秒目(= --sync)からの秒。
+    total は省略時の終端(動画長 or ログ末尾)。clamp なら total を超える終端を切り詰める。誤りは ValueError"""
+    start = start or 0.0
+    if end is not None and duration is not None:
+        raise ValueError("--end と --duration は同時に指定できません")
+    if end is None:
+        end = start + duration if duration is not None else total
+    if clamp and end > total:
+        print(f"警告: 終了位置 {end:.1f} 秒が動画の長さ {total:.1f} 秒を超えるので切り詰めます", file=sys.stderr)
+        end = total
+    if start >= end:
+        raise ValueError(f"開始位置 {start:.1f} 秒が終了位置 {end:.1f} 秒以降です")
+    return start, end - start
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="ecorun-overlay", description="エコラン用テレメトリ・オーバーレイ")
     ap.add_argument("csv", nargs="?", help="ロガーの CSV(--concat-only のときは不要)")
@@ -40,7 +74,11 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--concat-only", action="store_true", help="--video を連結しただけの動画を書き出す(オーバーレイなし・再エンコードなし)")
     ap.add_argument("--sync", help="動画 0 秒目に対応するログ時刻 (例 11:16:50) またはログ開始からの秒")
     ap.add_argument("--offset", type=float, default=0.0, help="同期の微調整 [秒]")
-    ap.add_argument("--duration", type=float, help="出力長 [秒](省略時は動画長 or ログ末尾まで)")
+    ap.add_argument("--start", type=parse_position, metavar="POS",
+                    help="書き出し開始位置。動画(連結後)の再生位置を 秒 か [H:]MM:SS で(既定 0)")
+    ap.add_argument("--end", type=parse_position, metavar="POS",
+                    help="書き出し終了位置(--start と同じ書式。省略時は動画の末尾 or ログ末尾まで)")
+    ap.add_argument("--duration", type=float, help="出力長 [秒]。--start からの長さ(--end と併用不可)")
     ap.add_argument("--preview", type=float, help="ログ開始からの秒を指定して静止画 1 枚を出力")
     ap.add_argument("--debug-boxes", action="store_true", help="各ウィジェットの枠と id、配置禁止帯を描く(--preview 向け)")
     ap.add_argument("--fps", type=float, default=FPS_DEFAULT)
@@ -88,10 +126,18 @@ def main(argv=None):
         sys.exit(str(e))
     fonts = Fonts(args.font or preset.theme.font or None)
     t_sync = parse_sync(tel, args.sync) + args.offset
+    try:
+        start, duration = resolve_range(args.start, args.end, args.duration,
+                                        src.duration if src else float(tel.t[-1]) - t_sync, clamp=src is not None)
+    except ValueError as e:
+        ap.error(str(e))
+    # 区間全体のグラフなどは書き出す区間に合わせる(プレビューも本番と同じ見た目にする)
+    t_start = max(0.0, t_sync + start)
+    t_end = min(float(tel.t[-1]), t_sync + start + duration)
 
     # ---- プレビュー ----
     if args.preview is not None:
-        r = OverlayRenderer(tel, preset, max(0, t_sync), tel.t[-1], fonts, args.debug_boxes)
+        r = OverlayRenderer(tel, preset, t_start, max(t_start, t_end), fonts, args.debug_boxes)
         preview_image(r, args.preview).save(args.output)
         print(f"preview → {args.output}")
         return
@@ -99,10 +145,8 @@ def main(argv=None):
     from .video import encode
 
     fps = src.fps if src else args.fps
-    duration = args.duration or (src.duration if src else tel.t[-1] - t_sync)
-    t_end = min(tel.t[-1], t_sync + duration)
-    r = OverlayRenderer(tel, preset, max(0.0, t_sync), t_end, fonts, args.debug_boxes)
-    encode(r, args.output, t_sync, duration, fps, src, args.crf)
+    r = OverlayRenderer(tel, preset, t_start, max(t_start, t_end), fonts, args.debug_boxes)
+    encode(r, args.output, t_sync, duration, fps, src, args.crf, start=start)
     print(f"done → {args.output}")
 
 

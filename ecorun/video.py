@@ -156,32 +156,37 @@ def extract_frame(video: str | VideoSource, t: float, size: tuple[int, int] | No
 
 
 def encode(r: OverlayRenderer, out_path: str, t_sync: float, duration: float, fps: float,
-           video: VideoSource | None = None, crf: int = 18):
+           video: VideoSource | None = None, crf: int = 18, start: float = 0.0):
     """RGBA の raw フレームを stdin パイプで ffmpeg に渡す。
-    video あり → overlay フィルタで合成して H.264 / なし → ProRes 4444(アルファ付き .mov)"""
+    video あり → overlay フィルタで合成して H.264 / なし → ProRes 4444(アルファ付き .mov)。
+    start は書き出し開始位置(動画の通し秒)。出力 0 秒目のログ秒は t_sync + start"""
     if not shutil.which("ffmpeg"):
         sys.exit("ffmpeg が見つかりません")
     if video is None and not out_path.lower().endswith(".mov"):
         sys.exit("--video なしの場合、出力は .mov(透過 ProRes 4444)か .png(--preview)にしてください")
     with input_args(video) if video else nullcontext([]) as video_in:
-        _encode(r, out_path, t_sync, duration, fps, video, video_in, crf)
+        _encode(r, out_path, t_sync, duration, fps, video, video_in, crf, start)
 
 
 def _encode(r: OverlayRenderer, out_path: str, t_sync: float, duration: float, fps: float,
-            video: VideoSource | None, video_in: list[str], crf: int):
+            video: VideoSource | None, video_in: list[str], crf: int, start: float):
     tel = r.tel
-    n_frames = int(duration * fps)
-    if video and duration >= video.duration - 1e-6:
-        # 連結すると AAC のプライミング分だけ映像の pts が後ろにずれ、shortest で最後の 1 枚が落ちる。
-        # 1 枚余分に送っておく(余りは shortest で切られる)
+    n_out = n_frames = int(duration * fps)
+    if video:
+        # 音声があると AAC のプライミング分だけ映像の pts が後ろにずれ、shortest で最後の 1 枚が落ちる。
+        # 1 枚余分に送っておき、出力の枚数は -frames:v で揃える
         n_frames += 1
     raw_in = ["-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{r.W}x{r.H}", "-r", f"{fps}", "-i", "-"]
     if video:
         vw, vh = video.width, video.height
-        cmd = ["ffmpeg", "-y", "-loglevel", "error", *video_in, *raw_in,
+        # 入力シーク(-ss を -i の前)。再エンコードするのでフレーム単位で正確。
+        # 映像は -frames:v で枚数を揃え、音声は -t で区間に切る(映像を切らないよう半フレーム長め)
+        seek = ["-ss", f"{start:.3f}"] if start > 0 else []
+        cmd = ["ffmpeg", "-y", "-loglevel", "error", *seek, *video_in, *raw_in,
                "-filter_complex", f"[1:v]scale={vw}:{vh}:flags=lanczos[ov];[0:v][ov]overlay=0:0:shortest=1[v]",
                "-map", "[v]", "-map", "0:a?", "-c:v", "libx264", "-preset", "medium",
-               "-crf", str(crf), "-pix_fmt", "yuv420p", "-c:a", "copy", out_path]
+               "-crf", str(crf), "-pix_fmt", "yuv420p", "-c:a", "copy",
+               "-frames:v", str(n_out), "-t", f"{duration + 0.5 / fps:.3f}", out_path]
     else:
         cmd = ["ffmpeg", "-y", "-loglevel", "error", *raw_in,
                "-c:v", "prores_ks", "-profile:v", "4444", "-pix_fmt", "yuva444p10le", out_path]
@@ -191,7 +196,7 @@ def _encode(r: OverlayRenderer, out_path: str, t_sync: float, duration: float, f
     k = 0
     try:
         for k in range(n_frames):
-            ts = t_sync + k / fps
+            ts = t_sync + start + k / fps
             frame = r.render(min(max(ts, tel.t[0]), tel.t[-1]))
             proc.stdin.write(frame.tobytes())
             if k % int(fps * 10) == 0:

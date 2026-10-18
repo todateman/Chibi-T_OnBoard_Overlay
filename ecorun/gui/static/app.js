@@ -15,7 +15,7 @@ const S = {
   history: [], future: [],
   issues: [], errors: [], skipped: [],
   csv: "", logInfo: null, ts: 0,
-  sync: "", offset: 0, duration: null,
+  sync: "", offset: 0, start: null, end: null,
   video: "", videoInfo: null, videoT: 0,
   snap: 10, showKeepout: true, showBoxes: true, showDisabled: false,
   playing: false,
@@ -63,7 +63,7 @@ function banner(msg, buttons = [], kind = "") {
   b.hidden = false;
 }
 function saveLocal() {
-  const keep = { name: S.name, csv: S.csv, sync: S.sync, offset: S.offset, duration: S.duration,
+  const keep = { name: S.name, csv: S.csv, sync: S.sync, offset: S.offset, start: S.start, end: S.end,
     video: S.video, snap: S.snap, showKeepout: S.showKeepout, showBoxes: S.showBoxes, showDisabled: S.showDisabled, ts: S.ts, videoT: S.videoT };
   try { localStorage.setItem(LS_KEY, JSON.stringify(keep)); } catch { /* 使えない環境 */ }
 }
@@ -247,7 +247,7 @@ async function doRender() {
   try {
     const res = await api("POST", "/api/render", {
       preset: S.preset, csv: S.csv, ts: S.ts, sync: S.sync || null, offset: S.offset || 0,
-      duration: S.duration || null,
+      start: S.start, end: S.end,
     });
     S.skipped = (res.headers.get("X-Skipped-Widgets") || "").split(",").filter(Boolean);
     const url = URL.createObjectURL(await res.blob());
@@ -293,6 +293,8 @@ function tSync() {
   return t + (Number(S.offset) || 0);
 }
 function useVideo() { return !!(S.video && S.videoInfo); }
+// スライダーの位置を --start / --end と同じ基準(動画の秒、動画が無ければ --sync からの秒)で返す
+function currentPos() { return Math.max(0, Math.round((useVideo() ? S.videoT : S.ts - tSync()) * 10) / 10); }
 // 動画欄は 1 行 1 パス(複数行・フォルダはサーバー側でファイル名順に連結される)
 const videoList = () => S.video.split("\n").map((s) => s.trim()).filter(Boolean);
 const videoQuery = () => videoList().map((v) => `video=${encodeURIComponent(v)}`).join("&");
@@ -660,11 +662,11 @@ function drawCommand() {
   const csv = q(S.csv || "LOG.CSV");
   const sync = S.sync ? ` --sync ${q(S.sync)}` : "";
   const off = Number(S.offset) ? ` --offset ${S.offset}` : "";
-  const dur = S.duration ? ` --duration ${S.duration}` : "";
+  const dur = (S.start ? ` --start ${S.start}` : "") + (S.end != null ? ` --end ${S.end}` : "");
   const videos = videoList().map(q).join(" ");
   const lines = [
     "# 静止画プレビュー(枠つき)",
-    `uv run ecorun-overlay ${csv} --preset ${S.name}${sync}${off} --preview ${S.ts.toFixed(1)} --debug-boxes -o preview.png`,
+    `uv run ecorun-overlay ${csv} --preset ${S.name}${sync}${off}${dur} --preview ${S.ts.toFixed(1)} --debug-boxes -o preview.png`,
     S.video ? "# 動画に合成" : "# 透過オーバーレイ(ProRes 4444)",
     S.video
       ? `uv run ecorun-overlay ${csv} --preset ${S.name} --video ${videos}${sync}${off}${dur} -o out.mp4`
@@ -713,7 +715,15 @@ function bind() {
   $("csvInput").addEventListener("change", loadLog);
   $("syncInput").addEventListener("change", (e) => { S.sync = e.target.value.trim(); saveLocal(); syncTimeline(); updateBackground(); scheduleRender(0); drawCommand(); });
   $("offsetInput").addEventListener("change", (e) => { S.offset = Number(e.target.value) || 0; saveLocal(); syncTimeline(); scheduleRender(0); drawCommand(); });
-  $("durationInput").addEventListener("change", (e) => { S.duration = Number(e.target.value) || null; saveLocal(); scheduleRender(0); drawCommand(); });
+  const setRange = (key, v) => {
+    S[key] = v === "" || v == null || !Number.isFinite(Number(v)) ? null : Math.max(0, Number(v));
+    $(`${key}Input`).value = S[key] ?? "";
+    saveLocal(); scheduleRender(0); drawCommand();
+  };
+  $("startInput").addEventListener("change", (e) => setRange("start", e.target.value));
+  $("endInput").addEventListener("change", (e) => setRange("end", e.target.value));
+  $("btnStartHere").onclick = () => setRange("start", currentPos());
+  $("btnEndHere").onclick = () => setRange("end", currentPos());
   $("btnVideo").onclick = loadVideo;
   $("videoInput").addEventListener("change", loadVideo);
   $("btnVideoClear").onclick = () => { $("videoInput").value = ""; loadVideo(); };
@@ -769,7 +779,7 @@ async function init() {
   bind();
   const local = loadLocal();
   Object.assign(S, {
-    csv: local.csv ?? "", sync: local.sync ?? "", offset: local.offset ?? 0, duration: local.duration ?? null,
+    csv: local.csv ?? "", sync: local.sync ?? "", offset: local.offset ?? 0, start: local.start ?? null, end: local.end ?? null,
     video: local.video ?? "", snap: local.snap ?? 10, ts: local.ts ?? 150, videoT: local.videoT ?? 0,
     showKeepout: local.showKeepout ?? true, showBoxes: local.showBoxes ?? true, showDisabled: local.showDisabled ?? false,
   });
@@ -779,7 +789,8 @@ async function init() {
   $("chkDisabled").checked = S.showDisabled;
   $("syncInput").value = S.sync;
   $("offsetInput").value = S.offset;
-  $("durationInput").value = S.duration ?? "";
+  $("startInput").value = S.start ?? "";
+  $("endInput").value = S.end ?? "";
   $("videoInput").value = S.video;
 
   const [types, schema, logs] = await Promise.all([api("GET", "/api/widget-types"), api("GET", "/api/schema"), api("GET", "/api/logs")]);
