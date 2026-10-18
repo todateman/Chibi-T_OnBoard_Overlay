@@ -88,6 +88,7 @@ w = 350
 h = 340
 title = "COURSE"
 show_on_segments = true
+on_segments_scope = "lap"
 show_legend = true
 
 # ---- 下段(映像の下半分はほぼ路面) ----

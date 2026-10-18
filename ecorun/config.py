@@ -148,13 +148,16 @@ class MaskWidget(WidgetBase):
 
 
 class MapWidget(WidgetBase):
-    """GPS 軌跡のコース図と現在地。エンジンON区間をオレンジで重ねる"""
+    """GPS 軌跡のコース図と現在地。エンジンON区間(既定は走行中の周の分)をオレンジで重ねる"""
     model_config = ConfigDict(title="コース図")
     REF: ClassVar = (350, 340)
     type: Literal["map"] = "map"
     x: int = _x(1540); y: int = _y(30); w: int = _w(350); h: int = _h(340)
     title: str = Field("COURSE", title="タイトル")
     show_on_segments: bool = Field(True, title="エンジンON区間を表示")
+    on_segments_scope: Literal["lap", "all"] = Field(
+        "lap", title="エンジンON区間の範囲",
+        description="lap: 走行中の周だけ(周が変わると切り替わる) / all: 全周を重ねる")
     show_legend: bool = Field(True, title="凡例を表示")
 
 
