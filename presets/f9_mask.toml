@@ -1,0 +1,174 @@
+#:schema ../schema/preset.schema.json
+# レイアウトプリセット。座標はすべて canvas(1920x1080)基準の px で、出力時に動画解像度へスケールされる。
+# 仕様: schema/preset.schema.json / `uv run ecorun-layout widgets` / README.md「プリセット」
+schema_version = 1
+name = "F9 マスク"
+description = "VSYSTO F9 向け。右下の焼き込み表示(日時・速度)を帯で隠し、帯の中に距離・燃料を出す"
+
+[canvas]
+width = 1920
+height = 1080
+
+[theme]
+accent = "#FF8C00"   # エンジンON・強調色(オレンジ)
+speed = "#00C8FF"    # 速度系の色(シアン)
+text = "#FFFFFF"
+sub = "#BEC4CD"
+alt = "#8CDC6E"      # 標高グラフ(グリーン)
+fuel_p = "#EB6EC8"   # 燃圧グラフ(マゼンタ)
+panel = "#0A0E14AA"  # パネル背景(AA が不透明度)
+grid = "#FFFFFF28"
+marker = "#FF2828"
+font = ""            # 空なら自動検出
+
+[data]
+rpm_on_threshold = 300.0     # これを超えたら「エンジンON」
+fuel_eco_min_dist_m = 300.0  # これより短い距離では燃費を "---" 表示
+heading_lookback_s = 3.0
+
+# 地平線付近はコース前方・マーシャル・前走車が映るので何も置かない
+[[keepout]]
+name = "地平線"
+x = 0
+y = 380
+w = 1920
+h = 260
+
+# ---- 上段 ----
+[[widgets]]
+id = "timer"
+type = "timer"
+enabled = true
+x = 30
+y = 30
+w = 530
+h = 100
+lap_total = 0
+
+[[widgets]]
+id = "speed_graph"
+type = "speed_graph"
+enabled = true
+x = 30
+y = 150
+w = 530
+h = 210
+title = "スピード / エンジンON"
+max = 60
+grid_step = 20
+show_on_bands = true
+
+[[widgets]]
+id = "heading"
+type = "heading"
+enabled = true
+x = 620
+y = 30
+w = 680
+h = 110
+span_deg = 70.0
+
+[[widgets]]
+id = "env"
+type = "env"
+enabled = true
+x = 620
+y = 146
+w = 680
+h = 44
+items = ["eng_temp", "air_temp", "hum", "press"]
+
+[[widgets]]
+id = "map"
+type = "map"
+enabled = true
+x = 1540
+y = 30
+w = 350
+h = 340
+title = "COURSE"
+show_on_segments = true
+show_legend = true
+
+# ---- 下段(映像の下半分はほぼ路面) ----
+[[widgets]]
+id = "fuel_eco"
+type = "fuel_eco"
+enabled = true
+x = 780
+y = 900
+w = 340
+h = 160
+show_odometer = false  # 距離・燃料は下の odometer(マスク帯の中)に出す
+
+# ドラレコの焼き込み表示(日時・速度、x 1140〜1720 / y 1000〜1040)を隠す帯。ゲージより下に敷く
+[[widgets]]
+id = "osd_mask"
+type = "mask"
+enabled = true
+x = 1128
+y = 992
+w = 632
+h = 60
+color = "#0A0E14FF"
+radius = 12
+
+[[widgets]]
+id = "speed_gauge"
+type = "speed_gauge"
+enabled = true
+x = 380
+y = 700
+w = 360
+h = 360
+max = 60
+step = 10
+
+[[widgets]]
+id = "rpm_gauge"
+type = "rpm_gauge"
+enabled = true
+x = 1160
+y = 700
+w = 360
+h = 360
+max = 6000
+step = 1000
+show_badge = true
+
+[[widgets]]
+id = "alt_graph"
+type = "alt_graph"
+enabled = true
+x = 30
+y = 770
+w = 330
+h = 210
+title = "標高"
+min_span_m = 5.0
+
+# 右側はドラレコ焼き込み表示(y≥1000)にかからない高さにする
+[[widgets]]
+id = "fuel_p_graph"
+type = "fuel_p_graph"
+enabled = true
+x = 1560
+y = 770
+w = 330
+h = 210
+title = "燃圧"
+max = 0.4
+grid_step = 0.1
+window_s = 60.0
+
+# マスク帯の中、回転ゲージの右側
+[[widgets]]
+id = "odometer"
+type = "odometer"
+enabled = true
+x = 1532
+y = 992
+w = 220
+h = 60
+panel = false
+stroke = 0

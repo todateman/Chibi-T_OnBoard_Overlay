@@ -1,0 +1,1178 @@
+{
+  "$defs": {
+    "AltGraphWidget": {
+      "additionalProperties": false,
+      "description": "出力区間全体の標高プロファイル(GPS 測位中のみ)と現在位置",
+      "properties": {
+        "id": {
+          "default": "",
+          "description": "プリセット内で一意。省略すると type から自動で付ける",
+          "pattern": "^[A-Za-z0-9_-]*$",
+          "title": "ID",
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "description": "false にすると描画しない(設定は残る)",
+          "title": "表示",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "alt_graph",
+          "default": "alt_graph",
+          "title": "Type",
+          "type": "string"
+        },
+        "x": {
+          "default": 30,
+          "description": "左上の X 座標 [px](キャンバス基準)",
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "default": 770,
+          "description": "左上の Y 座標 [px](キャンバス基準)",
+          "title": "Y",
+          "type": "integer"
+        },
+        "w": {
+          "default": 330,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "幅",
+          "type": "integer"
+        },
+        "h": {
+          "default": 210,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "高さ",
+          "type": "integer"
+        },
+        "title": {
+          "default": "標高",
+          "title": "タイトル",
+          "type": "string"
+        },
+        "min_span_m": {
+          "default": 5.0,
+          "description": "GPS 標高の小さな揺れを山に見せないための下限",
+          "exclusiveMinimum": 0,
+          "title": "縦軸の最小幅 [m]",
+          "type": "number"
+        }
+      },
+      "title": "標高グラフ",
+      "type": "object"
+    },
+    "Canvas": {
+      "additionalProperties": false,
+      "properties": {
+        "width": {
+          "default": 1920,
+          "description": "レイアウト基準の幅 [px]。出力時に動画解像度へスケールされる",
+          "maximum": 7680,
+          "minimum": 320,
+          "title": "幅",
+          "type": "integer"
+        },
+        "height": {
+          "default": 1080,
+          "description": "レイアウト基準の高さ [px]",
+          "maximum": 4320,
+          "minimum": 240,
+          "title": "高さ",
+          "type": "integer"
+        }
+      },
+      "title": "Canvas",
+      "type": "object"
+    },
+    "DataParams": {
+      "additionalProperties": false,
+      "properties": {
+        "rpm_on_threshold": {
+          "default": 300,
+          "description": "回転数がこれを超えたらエンジンONとみなす",
+          "minimum": 0,
+          "title": "ENGINE ON 判定 [rpm]",
+          "type": "number"
+        },
+        "fuel_eco_min_dist_m": {
+          "default": 300,
+          "description": "これより短い距離では燃費を --- 表示(走り出しの外れ値対策)",
+          "minimum": 0,
+          "title": "燃費表示開始距離 [m]",
+          "type": "number"
+        },
+        "heading_lookback_s": {
+          "default": 3.0,
+          "description": "方位をこの秒数だけ前の位置からのベクトルで求める",
+          "exclusiveMinimum": 0,
+          "maximum": 30,
+          "title": "方位の参照秒数 [s]",
+          "type": "number"
+        }
+      },
+      "title": "DataParams",
+      "type": "object"
+    },
+    "EnvWidget": {
+      "additionalProperties": false,
+      "description": "エンジン温度・気温・湿度・気圧を 1 行で表示",
+      "properties": {
+        "id": {
+          "default": "",
+          "description": "プリセット内で一意。省略すると type から自動で付ける",
+          "pattern": "^[A-Za-z0-9_-]*$",
+          "title": "ID",
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "description": "false にすると描画しない(設定は残る)",
+          "title": "表示",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "env",
+          "default": "env",
+          "title": "Type",
+          "type": "string"
+        },
+        "x": {
+          "default": 620,
+          "description": "左上の X 座標 [px](キャンバス基準)",
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "default": 146,
+          "description": "左上の Y 座標 [px](キャンバス基準)",
+          "title": "Y",
+          "type": "integer"
+        },
+        "w": {
+          "default": 680,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "幅",
+          "type": "integer"
+        },
+        "h": {
+          "default": 44,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "高さ",
+          "type": "integer"
+        },
+        "items": {
+          "default": [
+            "eng_temp",
+            "air_temp",
+            "hum",
+            "press"
+          ],
+          "description": "左からの表示順。eng_temp=エンジン温度, air_temp=気温, hum=湿度, press=気圧",
+          "items": {
+            "enum": [
+              "eng_temp",
+              "air_temp",
+              "hum",
+              "press"
+            ],
+            "type": "string"
+          },
+          "title": "表示項目",
+          "type": "array"
+        }
+      },
+      "title": "環境",
+      "type": "object"
+    },
+    "FuelEcoWidget": {
+      "additionalProperties": false,
+      "description": "燃費(km/L)。走り出しの短い距離では --- 表示",
+      "properties": {
+        "id": {
+          "default": "",
+          "description": "プリセット内で一意。省略すると type から自動で付ける",
+          "pattern": "^[A-Za-z0-9_-]*$",
+          "title": "ID",
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "description": "false にすると描画しない(設定は残る)",
+          "title": "表示",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "fuel_eco",
+          "default": "fuel_eco",
+          "title": "Type",
+          "type": "string"
+        },
+        "x": {
+          "default": 780,
+          "description": "左上の X 座標 [px](キャンバス基準)",
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "default": 900,
+          "description": "左上の Y 座標 [px](キャンバス基準)",
+          "title": "Y",
+          "type": "integer"
+        },
+        "w": {
+          "default": 340,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "幅",
+          "type": "integer"
+        },
+        "h": {
+          "default": 160,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "高さ",
+          "type": "integer"
+        },
+        "show_odometer": {
+          "default": true,
+          "description": "パネル左下に距離と積算燃料を出す。odometer ウィジェットを別に置くなら false",
+          "title": "距離・燃料も表示",
+          "type": "boolean"
+        }
+      },
+      "title": "燃費",
+      "type": "object"
+    },
+    "FuelPressureGraphWidget": {
+      "additionalProperties": false,
+      "description": "直近の燃圧をスクロール表示。燃圧列の無いログでは表示しない",
+      "properties": {
+        "id": {
+          "default": "",
+          "description": "プリセット内で一意。省略すると type から自動で付ける",
+          "pattern": "^[A-Za-z0-9_-]*$",
+          "title": "ID",
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "description": "false にすると描画しない(設定は残る)",
+          "title": "表示",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "fuel_p_graph",
+          "default": "fuel_p_graph",
+          "title": "Type",
+          "type": "string"
+        },
+        "x": {
+          "default": 1560,
+          "description": "左上の X 座標 [px](キャンバス基準)",
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "default": 770,
+          "description": "左上の Y 座標 [px](キャンバス基準)",
+          "title": "Y",
+          "type": "integer"
+        },
+        "w": {
+          "default": 330,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "幅",
+          "type": "integer"
+        },
+        "h": {
+          "default": 210,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "高さ",
+          "type": "integer"
+        },
+        "title": {
+          "default": "燃圧",
+          "title": "タイトル",
+          "type": "string"
+        },
+        "max": {
+          "default": 0.4,
+          "exclusiveMinimum": 0,
+          "title": "縦軸上限 [MPa]",
+          "type": "number"
+        },
+        "grid_step": {
+          "default": 0.1,
+          "exclusiveMinimum": 0,
+          "title": "目盛り間隔 [MPa]",
+          "type": "number"
+        },
+        "window_s": {
+          "default": 60,
+          "description": "右端を現在として直近この秒数を描く",
+          "exclusiveMinimum": 0,
+          "title": "表示する秒数",
+          "type": "number"
+        }
+      },
+      "title": "燃圧グラフ",
+      "type": "object"
+    },
+    "HeadingWidget": {
+      "additionalProperties": false,
+      "description": "方位テープと方位角(GPS の移動方向から算出)",
+      "properties": {
+        "id": {
+          "default": "",
+          "description": "プリセット内で一意。省略すると type から自動で付ける",
+          "pattern": "^[A-Za-z0-9_-]*$",
+          "title": "ID",
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "description": "false にすると描画しない(設定は残る)",
+          "title": "表示",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "heading",
+          "default": "heading",
+          "title": "Type",
+          "type": "string"
+        },
+        "x": {
+          "default": 620,
+          "description": "左上の X 座標 [px](キャンバス基準)",
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "default": 30,
+          "description": "左上の Y 座標 [px](キャンバス基準)",
+          "title": "Y",
+          "type": "integer"
+        },
+        "w": {
+          "default": 680,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "幅",
+          "type": "integer"
+        },
+        "h": {
+          "default": 110,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "高さ",
+          "type": "integer"
+        },
+        "span_deg": {
+          "default": 70,
+          "description": "中心から左右それぞれに表示する角度",
+          "exclusiveMinimum": 5,
+          "maximum": 180,
+          "title": "表示範囲 [°]",
+          "type": "number"
+        }
+      },
+      "title": "方位",
+      "type": "object"
+    },
+    "KeepOut": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "default": "",
+          "title": "名前",
+          "type": "string"
+        },
+        "x": {
+          "default": 0,
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "default": 0,
+          "title": "Y",
+          "type": "integer"
+        },
+        "w": {
+          "default": 1,
+          "minimum": 1,
+          "title": "幅",
+          "type": "integer"
+        },
+        "h": {
+          "default": 1,
+          "minimum": 1,
+          "title": "高さ",
+          "type": "integer"
+        }
+      },
+      "title": "KeepOut",
+      "type": "object"
+    },
+    "MapWidget": {
+      "additionalProperties": false,
+      "description": "GPS 軌跡のコース図と現在地。エンジンON区間をオレンジで重ねる",
+      "properties": {
+        "id": {
+          "default": "",
+          "description": "プリセット内で一意。省略すると type から自動で付ける",
+          "pattern": "^[A-Za-z0-9_-]*$",
+          "title": "ID",
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "description": "false にすると描画しない(設定は残る)",
+          "title": "表示",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "map",
+          "default": "map",
+          "title": "Type",
+          "type": "string"
+        },
+        "x": {
+          "default": 1540,
+          "description": "左上の X 座標 [px](キャンバス基準)",
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "default": 30,
+          "description": "左上の Y 座標 [px](キャンバス基準)",
+          "title": "Y",
+          "type": "integer"
+        },
+        "w": {
+          "default": 350,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "幅",
+          "type": "integer"
+        },
+        "h": {
+          "default": 340,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "高さ",
+          "type": "integer"
+        },
+        "title": {
+          "default": "COURSE",
+          "title": "タイトル",
+          "type": "string"
+        },
+        "show_on_segments": {
+          "default": true,
+          "title": "エンジンON区間を表示",
+          "type": "boolean"
+        },
+        "show_legend": {
+          "default": true,
+          "title": "凡例を表示",
+          "type": "boolean"
+        }
+      },
+      "title": "コース図",
+      "type": "object"
+    },
+    "MaskWidget": {
+      "additionalProperties": false,
+      "description": "不透明な帯。ドラレコの焼き込み表示(日時・速度)を隠す",
+      "properties": {
+        "id": {
+          "default": "",
+          "description": "プリセット内で一意。省略すると type から自動で付ける",
+          "pattern": "^[A-Za-z0-9_-]*$",
+          "title": "ID",
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "description": "false にすると描画しない(設定は残る)",
+          "title": "表示",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "mask",
+          "default": "mask",
+          "title": "Type",
+          "type": "string"
+        },
+        "x": {
+          "default": 1128,
+          "description": "左上の X 座標 [px](キャンバス基準)",
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "default": 992,
+          "description": "左上の Y 座標 [px](キャンバス基準)",
+          "title": "Y",
+          "type": "integer"
+        },
+        "w": {
+          "default": 632,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "幅",
+          "type": "integer"
+        },
+        "h": {
+          "default": 60,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "高さ",
+          "type": "integer"
+        },
+        "color": {
+          "default": "#0A0E14FF",
+          "format": "color",
+          "pattern": "^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$",
+          "title": "色",
+          "type": "string"
+        },
+        "radius": {
+          "default": 12,
+          "minimum": 0,
+          "title": "角の丸み [px]",
+          "type": "integer"
+        }
+      },
+      "title": "マスク帯",
+      "type": "object"
+    },
+    "OdometerWidget": {
+      "additionalProperties": false,
+      "description": "走行距離と積算燃料の 2 行表示",
+      "properties": {
+        "id": {
+          "default": "",
+          "description": "プリセット内で一意。省略すると type から自動で付ける",
+          "pattern": "^[A-Za-z0-9_-]*$",
+          "title": "ID",
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "description": "false にすると描画しない(設定は残る)",
+          "title": "表示",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "odometer",
+          "default": "odometer",
+          "title": "Type",
+          "type": "string"
+        },
+        "x": {
+          "default": 1532,
+          "description": "左上の X 座標 [px](キャンバス基準)",
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "default": 992,
+          "description": "左上の Y 座標 [px](キャンバス基準)",
+          "title": "Y",
+          "type": "integer"
+        },
+        "w": {
+          "default": 220,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "幅",
+          "type": "integer"
+        },
+        "h": {
+          "default": 60,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "高さ",
+          "type": "integer"
+        },
+        "panel": {
+          "default": false,
+          "title": "背景パネル",
+          "type": "boolean"
+        },
+        "stroke": {
+          "default": 2,
+          "description": "暗い背景(mask など)の上なら 0",
+          "maximum": 6,
+          "minimum": 0,
+          "title": "文字の縁取り [px]",
+          "type": "integer"
+        }
+      },
+      "title": "距離・燃料",
+      "type": "object"
+    },
+    "RpmGaugeWidget": {
+      "additionalProperties": false,
+      "description": "回転数の円形ゲージと ENGINE ON / COAST バッジ",
+      "properties": {
+        "id": {
+          "default": "",
+          "description": "プリセット内で一意。省略すると type から自動で付ける",
+          "pattern": "^[A-Za-z0-9_-]*$",
+          "title": "ID",
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "description": "false にすると描画しない(設定は残る)",
+          "title": "表示",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "rpm_gauge",
+          "default": "rpm_gauge",
+          "title": "Type",
+          "type": "string"
+        },
+        "x": {
+          "default": 1160,
+          "description": "左上の X 座標 [px](キャンバス基準)",
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "default": 700,
+          "description": "左上の Y 座標 [px](キャンバス基準)",
+          "title": "Y",
+          "type": "integer"
+        },
+        "w": {
+          "default": 360,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "幅",
+          "type": "integer"
+        },
+        "h": {
+          "default": 360,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "高さ",
+          "type": "integer"
+        },
+        "max": {
+          "default": 6000,
+          "minimum": 1,
+          "title": "上限 [rpm]",
+          "type": "integer"
+        },
+        "step": {
+          "default": 1000,
+          "minimum": 1,
+          "title": "目盛り間隔 [rpm]",
+          "type": "integer"
+        },
+        "show_badge": {
+          "default": true,
+          "title": "ENGINE ON / COAST バッジ",
+          "type": "boolean"
+        }
+      },
+      "title": "回転ゲージ",
+      "type": "object"
+    },
+    "SpeedGaugeWidget": {
+      "additionalProperties": false,
+      "description": "速度の円形ゲージ。円は box に内接する",
+      "properties": {
+        "id": {
+          "default": "",
+          "description": "プリセット内で一意。省略すると type から自動で付ける",
+          "pattern": "^[A-Za-z0-9_-]*$",
+          "title": "ID",
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "description": "false にすると描画しない(設定は残る)",
+          "title": "表示",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "speed_gauge",
+          "default": "speed_gauge",
+          "title": "Type",
+          "type": "string"
+        },
+        "x": {
+          "default": 380,
+          "description": "左上の X 座標 [px](キャンバス基準)",
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "default": 700,
+          "description": "左上の Y 座標 [px](キャンバス基準)",
+          "title": "Y",
+          "type": "integer"
+        },
+        "w": {
+          "default": 360,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "幅",
+          "type": "integer"
+        },
+        "h": {
+          "default": 360,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "高さ",
+          "type": "integer"
+        },
+        "max": {
+          "default": 60,
+          "minimum": 1,
+          "title": "上限 [km/h]",
+          "type": "integer"
+        },
+        "step": {
+          "default": 10,
+          "minimum": 1,
+          "title": "目盛り間隔 [km/h]",
+          "type": "integer"
+        }
+      },
+      "title": "速度ゲージ",
+      "type": "object"
+    },
+    "SpeedGraphWidget": {
+      "additionalProperties": false,
+      "description": "出力区間全体の速度グラフ。エンジンON区間を帯で表示し、現在位置にカーソル",
+      "properties": {
+        "id": {
+          "default": "",
+          "description": "プリセット内で一意。省略すると type から自動で付ける",
+          "pattern": "^[A-Za-z0-9_-]*$",
+          "title": "ID",
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "description": "false にすると描画しない(設定は残る)",
+          "title": "表示",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "speed_graph",
+          "default": "speed_graph",
+          "title": "Type",
+          "type": "string"
+        },
+        "x": {
+          "default": 30,
+          "description": "左上の X 座標 [px](キャンバス基準)",
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "default": 150,
+          "description": "左上の Y 座標 [px](キャンバス基準)",
+          "title": "Y",
+          "type": "integer"
+        },
+        "w": {
+          "default": 530,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "幅",
+          "type": "integer"
+        },
+        "h": {
+          "default": 210,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "高さ",
+          "type": "integer"
+        },
+        "title": {
+          "default": "スピード / エンジンON",
+          "title": "タイトル",
+          "type": "string"
+        },
+        "max": {
+          "default": 60,
+          "minimum": 1,
+          "title": "縦軸上限 [km/h]",
+          "type": "integer"
+        },
+        "grid_step": {
+          "default": 20,
+          "minimum": 1,
+          "title": "目盛り間隔 [km/h]",
+          "type": "integer"
+        },
+        "show_on_bands": {
+          "default": true,
+          "title": "エンジンON帯を表示",
+          "type": "boolean"
+        }
+      },
+      "title": "速度グラフ",
+      "type": "object"
+    },
+    "TextWidget": {
+      "additionalProperties": false,
+      "description": "任意の固定テキスト(チーム名・大会名など)",
+      "properties": {
+        "id": {
+          "default": "",
+          "description": "プリセット内で一意。省略すると type から自動で付ける",
+          "pattern": "^[A-Za-z0-9_-]*$",
+          "title": "ID",
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "description": "false にすると描画しない(設定は残る)",
+          "title": "表示",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "text",
+          "default": "text",
+          "title": "Type",
+          "type": "string"
+        },
+        "x": {
+          "default": 30,
+          "description": "左上の X 座標 [px](キャンバス基準)",
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "default": 1000,
+          "description": "左上の Y 座標 [px](キャンバス基準)",
+          "title": "Y",
+          "type": "integer"
+        },
+        "w": {
+          "default": 400,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "幅",
+          "type": "integer"
+        },
+        "h": {
+          "default": 50,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "高さ",
+          "type": "integer"
+        },
+        "text": {
+          "default": "ちびTインターナショナル",
+          "title": "テキスト",
+          "type": "string"
+        },
+        "size": {
+          "default": 28,
+          "maximum": 300,
+          "minimum": 6,
+          "title": "文字サイズ [px]",
+          "type": "integer"
+        },
+        "color": {
+          "default": "#FFFFFF",
+          "format": "color",
+          "pattern": "^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$",
+          "title": "色",
+          "type": "string"
+        },
+        "align": {
+          "default": "left",
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ],
+          "title": "揃え",
+          "type": "string"
+        },
+        "panel": {
+          "default": false,
+          "title": "背景パネル",
+          "type": "boolean"
+        },
+        "stroke": {
+          "default": 2,
+          "maximum": 6,
+          "minimum": 0,
+          "title": "文字の縁取り [px]",
+          "type": "integer"
+        }
+      },
+      "title": "テキスト",
+      "type": "object"
+    },
+    "Theme": {
+      "additionalProperties": false,
+      "properties": {
+        "accent": {
+          "default": "#FF8C00",
+          "description": "エンジンON・燃費の数値・方位の主要点",
+          "format": "color",
+          "pattern": "^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$",
+          "title": "強調色",
+          "type": "string"
+        },
+        "speed": {
+          "default": "#00C8FF",
+          "description": "速度ゲージと速度グラフ",
+          "format": "color",
+          "pattern": "^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$",
+          "title": "速度の色",
+          "type": "string"
+        },
+        "text": {
+          "default": "#FFFFFF",
+          "description": "数値など主要な文字",
+          "format": "color",
+          "pattern": "^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$",
+          "title": "文字色",
+          "type": "string"
+        },
+        "sub": {
+          "default": "#BEC4CD",
+          "description": "ラベル・目盛り",
+          "format": "color",
+          "pattern": "^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$",
+          "title": "補助文字色",
+          "type": "string"
+        },
+        "alt": {
+          "default": "#8CDC6E",
+          "format": "color",
+          "pattern": "^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$",
+          "title": "標高グラフの色",
+          "type": "string"
+        },
+        "fuel_p": {
+          "default": "#EB6EC8",
+          "format": "color",
+          "pattern": "^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$",
+          "title": "燃圧グラフの色",
+          "type": "string"
+        },
+        "panel": {
+          "default": "#0A0E14AA",
+          "description": "#RRGGBBAA の AA が不透明度",
+          "format": "color",
+          "pattern": "^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$",
+          "title": "パネル背景",
+          "type": "string"
+        },
+        "grid": {
+          "default": "#FFFFFF28",
+          "format": "color",
+          "pattern": "^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$",
+          "title": "グラフの目盛り線",
+          "type": "string"
+        },
+        "marker": {
+          "default": "#FF2828",
+          "format": "color",
+          "pattern": "^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$",
+          "title": "現在地・方位マーカー",
+          "type": "string"
+        },
+        "font": {
+          "default": "",
+          "description": "日本語フォント (.ttf/.ttc) のパス。空なら自動検出。CLI の --font が優先",
+          "title": "フォント",
+          "type": "string"
+        }
+      },
+      "title": "Theme",
+      "type": "object"
+    },
+    "TimerWidget": {
+      "additionalProperties": false,
+      "description": "走行時間・現在ラップのタイム・前周タイム",
+      "properties": {
+        "id": {
+          "default": "",
+          "description": "プリセット内で一意。省略すると type から自動で付ける",
+          "pattern": "^[A-Za-z0-9_-]*$",
+          "title": "ID",
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "description": "false にすると描画しない(設定は残る)",
+          "title": "表示",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "timer",
+          "default": "timer",
+          "title": "Type",
+          "type": "string"
+        },
+        "x": {
+          "default": 30,
+          "description": "左上の X 座標 [px](キャンバス基準)",
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "default": 30,
+          "description": "左上の Y 座標 [px](キャンバス基準)",
+          "title": "Y",
+          "type": "integer"
+        },
+        "w": {
+          "default": 530,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "幅",
+          "type": "integer"
+        },
+        "h": {
+          "default": 100,
+          "description": "[px]",
+          "minimum": 8,
+          "title": "高さ",
+          "type": "integer"
+        },
+        "lap_total": {
+          "default": 0,
+          "description": "1 以上で LAP 2/3 のように表示。0 なら LAP 2",
+          "minimum": 0,
+          "title": "総周回数",
+          "type": "integer"
+        }
+      },
+      "title": "走行時間・ラップ",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "スキーマのバージョン",
+      "type": "integer"
+    },
+    "name": {
+      "default": "",
+      "title": "表示名",
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "title": "説明",
+      "type": "string"
+    },
+    "canvas": {
+      "$ref": "#/$defs/Canvas",
+      "title": "キャンバス"
+    },
+    "theme": {
+      "$ref": "#/$defs/Theme",
+      "title": "配色・フォント"
+    },
+    "data": {
+      "$ref": "#/$defs/DataParams",
+      "title": "判定の閾値"
+    },
+    "keepout": {
+      "description": "ここにウィジェットが重なると lint が警告する(地平線付近など映像で見せたい領域)",
+      "items": {
+        "$ref": "#/$defs/KeepOut"
+      },
+      "title": "配置禁止帯",
+      "type": "array"
+    },
+    "widgets": {
+      "description": "配列の順番が重なり順(後ろほど上)。静的部分を全ウィジェット分描いてから動的部分を描く",
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "alt_graph": "#/$defs/AltGraphWidget",
+            "env": "#/$defs/EnvWidget",
+            "fuel_eco": "#/$defs/FuelEcoWidget",
+            "fuel_p_graph": "#/$defs/FuelPressureGraphWidget",
+            "heading": "#/$defs/HeadingWidget",
+            "map": "#/$defs/MapWidget",
+            "mask": "#/$defs/MaskWidget",
+            "odometer": "#/$defs/OdometerWidget",
+            "rpm_gauge": "#/$defs/RpmGaugeWidget",
+            "speed_gauge": "#/$defs/SpeedGaugeWidget",
+            "speed_graph": "#/$defs/SpeedGraphWidget",
+            "text": "#/$defs/TextWidget",
+            "timer": "#/$defs/TimerWidget"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/TimerWidget"
+          },
+          {
+            "$ref": "#/$defs/SpeedGraphWidget"
+          },
+          {
+            "$ref": "#/$defs/EnvWidget"
+          },
+          {
+            "$ref": "#/$defs/FuelEcoWidget"
+          },
+          {
+            "$ref": "#/$defs/OdometerWidget"
+          },
+          {
+            "$ref": "#/$defs/MaskWidget"
+          },
+          {
+            "$ref": "#/$defs/MapWidget"
+          },
+          {
+            "$ref": "#/$defs/SpeedGaugeWidget"
+          },
+          {
+            "$ref": "#/$defs/RpmGaugeWidget"
+          },
+          {
+            "$ref": "#/$defs/AltGraphWidget"
+          },
+          {
+            "$ref": "#/$defs/FuelPressureGraphWidget"
+          },
+          {
+            "$ref": "#/$defs/HeadingWidget"
+          },
+          {
+            "$ref": "#/$defs/TextWidget"
+          }
+        ]
+      },
+      "title": "ウィジェット",
+      "type": "array"
+    }
+  },
+  "title": "ecorun_overlay レイアウトプリセット",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

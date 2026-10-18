@@ -1,0 +1,103 @@
+#:schema ../schema/preset.schema.json
+# 最小構成の例: 速度・回転・燃費・コース図・走行時間だけを小さめに四隅へ置く
+schema_version = 1
+name = "ミニマル"
+description = "速度・回転・燃費・コース図・走行時間だけを小さめに四隅へ置く例"
+
+[canvas]
+width = 1920
+height = 1080
+
+[theme]
+accent = "#FF8C00"
+speed = "#00C8FF"
+text = "#FFFFFF"
+sub = "#BEC4CD"
+alt = "#8CDC6E"
+fuel_p = "#EB6EC8"
+panel = "#0A0E1499"
+grid = "#FFFFFF28"
+marker = "#FF2828"
+font = ""
+
+[data]
+rpm_on_threshold = 300.0
+fuel_eco_min_dist_m = 300.0
+heading_lookback_s = 3.0
+
+[[keepout]]
+name = "地平線"
+x = 0
+y = 380
+w = 1920
+h = 260
+
+[[widgets]]
+id = "timer"
+type = "timer"
+enabled = true
+x = 30
+y = 30
+w = 424
+h = 80
+lap_total = 0
+
+[[widgets]]
+id = "map"
+type = "map"
+enabled = true
+x = 1640
+y = 30
+w = 250
+h = 243
+title = "COURSE"
+show_on_segments = true
+show_legend = true
+
+[[widgets]]
+id = "speed_gauge"
+type = "speed_gauge"
+enabled = true
+x = 30
+y = 790
+w = 260
+h = 260
+max = 60
+step = 10
+
+[[widgets]]
+id = "fuel_eco"
+type = "fuel_eco"
+enabled = true
+x = 310
+y = 922
+w = 272
+h = 128
+show_odometer = true
+
+[[widgets]]
+id = "rpm_gauge"
+type = "rpm_gauge"
+enabled = true
+x = 1630
+y = 790
+w = 260
+h = 260
+max = 6000
+step = 1000
+show_badge = true
+
+[[widgets]]
+id = "team"
+type = "text"
+enabled = true
+x = 760
+y = 1000
+w = 400
+h = 50
+text = "ちびTインターナショナル"
+size = 26
+color = "#FFFFFF"
+align = "center"
+panel = true
+stroke = 0
