@@ -1,7 +1,7 @@
-# ecorun_overlay
+# Chibi-T_OnBoard_Overlay
 
 Honda エコマイレッジチャレンジ用の車載動画テレメトリ・オーバーレイ生成ツール。  
-Chibi-T ロガーの CSV を読み込み、速度・回転数(エンジン ON / COAST)・燃費・ラップタイム・方位・コース図・標高・燃圧などを車載カメラ映像に重ねる。
+<https://github.com/todateman/Chibi-T_Furoshiki_Logger> の CSV を読み込み、速度・回転数(エンジン ON / COAST)・燃費・ラップタイム・方位・コース図・標高・燃圧などを車載カメラ映像に重ねる。
 
 ![preview](docs/preview.png)
 
