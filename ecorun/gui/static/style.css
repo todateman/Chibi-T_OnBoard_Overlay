@@ -93,6 +93,8 @@ aside { background: var(--bg2); padding: 10px; overflow: auto; min-height: 0; }
 }
 #timeline { padding: 4px 12px 8px; border-top: 1px solid var(--line); background: var(--bg2); }
 #timeLabel { min-width: 230px; text-align: right; color: var(--muted); }
+#timeline .inline { display: inline-flex; gap: 4px; align-items: center; }
+#timeline input[type=number] { width: 80px; }
 
 svg .wbox { fill: transparent; stroke: rgba(0, 200, 255, .45); stroke-dasharray: 6 4; cursor: move; }
 svg .wbox.disabled { stroke: rgba(160,160,160,.5); }

@@ -275,7 +275,9 @@ class RenderBody(BaseModel):
     ts: float = Field(description="描画するログ秒(ログ開始からの秒)")
     sync: str | None = Field(None, description="出力区間の開始。HH:MM:SS[.f] またはログ秒(CLI の --sync と同じ)")
     offset: float = Field(0.0, description="CLI の --offset と同じ")
-    duration: float | None = Field(None, description="出力区間の長さ [秒]。省略時はログ末尾まで")
+    start: float | None = Field(None, ge=0, description="書き出し開始位置(動画 0 秒目 = sync からの秒。CLI の --start と同じ)")
+    end: float | None = Field(None, ge=0, description="書き出し終了位置(CLI の --end と同じ)。省略時は duration、それも無ければログ末尾まで")
+    duration: float | None = Field(None, description="出力区間の長さ [秒](start からの長さ)。end があればそちらを優先")
     debug_boxes: bool = Field(False, description="ウィジェット枠と id を描く")
     font: str = Field("", description="フォントのパス(空ならプリセットの theme.font → 自動検出)")
 
@@ -285,8 +287,15 @@ def render(body: RenderBody):
     p = _parse(body.preset)
     tel = _telemetry(body.csv, p.data.rpm_on_threshold, p.data.heading_lookback_s)
     t_sync = parse_sync(tel, body.sync) + body.offset
-    t_start = max(0.0, t_sync)
-    t_end = float(tel.t[-1]) if body.duration is None else min(float(tel.t[-1]), t_sync + body.duration)
+    start = body.start or 0.0
+    t_start = max(0.0, t_sync + start)
+    if body.end is not None:
+        t_end = t_sync + body.end
+    elif body.duration is not None:
+        t_end = t_sync + start + body.duration
+    else:
+        t_end = float(tel.t[-1])
+    t_end = max(t_start, min(float(tel.t[-1]), t_end))
     font = body.font or p.theme.font
     key = (id(tel), hashlib.sha1(json.dumps(preset_to_dict(p), sort_keys=True).encode()).hexdigest(),
            round(t_start, 3), round(t_end, 3), font, body.debug_boxes)

@@ -79,8 +79,17 @@
         <label>微調整 (--offset)
           <input id="offsetInput" type="number" step="0.1" value="0" size="6">
         </label>
-        <label>長さ (--duration)
-          <input id="durationInput" type="number" step="1" min="0" placeholder="末尾まで" size="7">
+        <label>開始 (--start)
+          <span class="inline">
+            <input id="startInput" type="number" step="0.1" min="0" placeholder="0" size="7" title="書き出し開始位置(動画の秒。動画が無ければ --sync からの秒)">
+            <button id="btnStartHere" title="今のスライダー位置を開始にする">現在位置</button>
+          </span>
+        </label>
+        <label>終了 (--end)
+          <span class="inline">
+            <input id="endInput" type="number" step="0.1" min="0" placeholder="末尾まで" size="7" title="書き出し終了位置(開始と同じ基準)">
+            <button id="btnEndHere" title="今のスライダー位置を終了にする">現在位置</button>
+          </span>
         </label>
       </div>
       <div class="row">

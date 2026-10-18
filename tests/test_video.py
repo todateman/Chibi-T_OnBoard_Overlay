@@ -75,3 +75,24 @@ def test_encode_concatenated(seg_dir, tel, tmp_path):
 def test_single_file_source(seg_dir):
     src = probe_videos([str(seg_dir / "F9_0001.MP4")])
     assert isinstance(src, VideoSource) and len(src.files) == 1
+
+
+def test_encode_from_start(seg_dir, tel, tmp_path):
+    """動画の途中(1.2 秒 = 2 本目の青)から 1.5 秒だけ書き出す"""
+    src = probe_videos([str(seg_dir)])
+    r = OverlayRenderer(tel, load_preset("minimal"), 31.2, 32.7, Fonts())
+    out = tmp_path / "part.mp4"
+    encode(r, str(out), 30, 1.5, src.fps, src, start=1.2)
+    assert probe(str(out))[3] == pytest.approx(1.5, abs=0.15)
+    assert extract_frame(str(out), 0.0).getpixel((160, 90))[2] > 200    # 先頭は青
+    assert extract_frame(str(out), 1.3).getpixel((160, 90))[1] > 200    # 末尾は緑
+
+
+def test_start_end_cli(seg_dir, synth_csv, tmp_path):
+    out = tmp_path / "cut.mp4"
+    main([str(synth_csv), "--preset", "minimal", "--video", str(seg_dir), "--sync", "30",
+          "--start", "0:01", "--end", "2.5", "-o", str(out)])
+    assert probe(str(out))[3] == pytest.approx(1.5, abs=0.15)
+    with pytest.raises(SystemExit):     # --end と --duration は排他
+        main([str(synth_csv), "--video", str(seg_dir), "--start", "1", "--end", "2", "--duration", "1",
+              "-o", str(tmp_path / "x.mp4")])

@@ -51,6 +51,9 @@ def test_render_png(client, synth_csv):
     preset = client.get("/api/presets/default").json()["preset"]
     r = client.post("/api/render", json={"preset": preset, "csv": str(synth_csv), "ts": 30, "debug_boxes": True})
     assert r.status_code == 200 and r.content[:8] == b"\x89PNG\r\n\x1a\n"
+    r = client.post("/api/render", json={"preset": preset, "csv": str(synth_csv), "ts": 70,
+                                         "sync": "30", "start": 20, "end": 80})
+    assert r.status_code == 200
     info = client.get("/api/log-info", params={"csv": str(synth_csv)}).json()
     assert info["has_fuel_p"] and info["t_end"] > 100
 
