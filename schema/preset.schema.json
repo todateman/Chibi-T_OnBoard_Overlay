@@ -423,7 +423,7 @@
     },
     "MapWidget": {
       "additionalProperties": false,
-      "description": "GPS 軌跡のコース図と現在地。エンジンON区間をオレンジで重ねる",
+      "description": "GPS 軌跡のコース図と現在地。エンジンON区間(既定は走行中の周の分)をオレンジで重ねる",
       "properties": {
         "id": {
           "default": "",
@@ -479,6 +479,16 @@
           "default": true,
           "title": "エンジンON区間を表示",
           "type": "boolean"
+        },
+        "on_segments_scope": {
+          "default": "lap",
+          "description": "lap: 走行中の周だけ(周が変わると切り替わる) / all: 全周を重ねる",
+          "enum": [
+            "lap",
+            "all"
+          ],
+          "title": "エンジンON区間の範囲",
+          "type": "string"
         },
         "show_legend": {
           "default": true,

@@ -240,25 +240,18 @@ class Map(WidgetImpl):
         img = Image.new("RGBA", (w * SS, h * SS), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
         self.proj = None
+        self._lap_layers = {}
         if tel.has_fix.sum() >= 2:
             self.proj = self._proj()
             m = tel.has_fix
             px, py = self.proj(tel.df["lat"].to_numpy()[m], tel.df["lon"].to_numpy()[m])
-            pts = list(zip((px * SS).tolist(), (py * SS).tolist()))
-            on = (tel.df["rpm"].to_numpy()[m] > self.ctx.data.rpm_on_threshold).tolist()
-            d.line(pts, fill=(255, 255, 255, 220), width=round(5 * self.s) * SS, joint="curve")
-            if cfg.show_on_segments:
-                # エンジンON区間をオレンジで上書き(どこで加速したかが一目で分かる)
-                # 10 Hz では 1 区間が短いので、連続した ON 区間をまとめて 1 本の線にする
-                seg = []
-                for i in range(1, len(pts)):
-                    if on[i]:
-                        seg = seg or [pts[i - 1]]
-                        seg.append(pts[i])
-                    if seg and (not on[i] or i == len(pts) - 1):
-                        d.line(seg, fill=rgba(c.accent, 180), width=round(9 * self.s) * SS, joint="curve")
-                        seg = []
+            self.pts = list(zip((px * SS).tolist(), (py * SS).tolist()))
+            self.on = (tel.df["rpm"].to_numpy()[m] > self.ctx.data.rpm_on_threshold).tolist()
+            self.laps = tel.df["lap"].to_numpy()[m]
+            d.line(self.pts, fill=(255, 255, 255, 220), width=round(5 * self.s) * SS, joint="curve")
         img = img.resize((w, h), Image.LANCZOS)
+        if self.proj is not None and cfg.show_on_segments and cfg.on_segments_scope == "all":
+            img.alpha_composite(self._on_layer(np.ones(len(self.pts), dtype=bool)))
         dd = ImageDraw.Draw(img)
         S = self.S
         self.T(dd, (S(16), S(10)), cfg.title, 20, c.sub)
@@ -269,10 +262,36 @@ class Map(WidgetImpl):
             self.T(dd, (S(44), h - S(22)), "エンジンON", 18, c.sub, "lm")
         return img
 
+    def _on_layer(self, sel: np.ndarray) -> Image.Image:
+        """sel の点のうちエンジンON区間をオレンジで描いた透明レイヤ(どこで加速したかが一目で分かる)。
+        10 Hz では 1 区間が短いので、連続した ON 区間をまとめて 1 本の線にする"""
+        w, h = self.x1 - self.x0, self.y1 - self.y0
+        img = Image.new("RGBA", (w * SS, h * SS), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        pts, on = self.pts, self.on
+        on_sel = [o and bool(s) for o, s in zip(on, sel)]
+        seg = []
+        for i in range(1, len(pts)):
+            if on_sel[i]:
+                seg = seg or [pts[i - 1]]   # 周の境界でも直前の点からつなぐ
+                seg.append(pts[i])
+            if seg and (not on_sel[i] or i == len(pts) - 1):
+                d.line(seg, fill=rgba(self.c.accent, 180), width=round(9 * self.s) * SS, joint="curve")
+                seg = []
+        return img.resize((w, h), Image.LANCZOS)
+
     def dynamic(self, img, ts):
-        tel = self.ctx.tel
+        tel, cfg = self.ctx.tel, self.cfg
+        if self.proj is None:
+            return
+        if cfg.show_on_segments and cfg.on_segments_scope == "lap":
+            # 走行中の周の ON 区間だけを描く(周ごとに 1 回だけ生成してキャッシュ)
+            lap = int(tel.step("lap", ts))
+            if lap not in self._lap_layers:
+                self._lap_layers[lap] = self._on_layer(self.laps == lap)
+            img.alpha_composite(self._lap_layers[lap], (self.x0, self.y0))
         i = int(np.clip(np.searchsorted(tel.t, ts), 0, len(tel.t) - 1))
-        if self.proj is None or not tel.has_fix[i]:
+        if not tel.has_fix[i]:
             return
         px, py = self.proj(tel.interp("lat", ts), tel.interp("lon", ts))
         px += self.x0

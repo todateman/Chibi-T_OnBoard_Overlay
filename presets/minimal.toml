@@ -52,6 +52,7 @@ w = 250
 h = 243
 title = "COURSE"
 show_on_segments = true
+on_segments_scope = "lap"
 show_legend = true
 
 [[widgets]]

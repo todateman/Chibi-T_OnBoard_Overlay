@@ -53,3 +53,24 @@ def test_disabled_widget_not_drawn(tel):
 def test_empty_preset_renders_transparent(tel):
     img = OverlayRenderer(tel, Preset(), 0, tel.t[-1]).render(1.0)
     assert img.getchannel("A").getbbox() is None
+
+
+def test_map_on_segments_per_lap(tel):
+    """コース図のエンジンON区間は走行中の周の分だけ描き、周が変わると切り替わる"""
+    starts = [(lap, t) for lap, t in tel.lap_starts if lap >= 1]
+    assert len(starts) >= 2
+    r = OverlayRenderer(tel, parse_preset({"widgets": [{"type": "map"}]}), 0, tel.t[-1])
+    m = r.widgets[0]
+    for _, t in starts[:2]:
+        r.render(t + 1.0)
+    a1, a2 = (np.array(m._lap_layers[lap].getchannel("A")) for lap, _ in starts[:2])
+    assert a1.any() and a2.any() and not np.array_equal(a1, a2)
+
+
+def test_map_on_segments_all_laps_is_static(tel):
+    p = {"widgets": [{"type": "map", "on_segments_scope": "all"}]}
+    r_all = OverlayRenderer(tel, parse_preset(p), 0, tel.t[-1])
+    r_lap = OverlayRenderer(tel, parse_preset({"widgets": [{"type": "map"}]}), 0, tel.t[-1])
+    r_all.render(60.0)
+    assert r_all.widgets[0]._lap_layers == {}
+    assert not np.array_equal(np.array(r_all.base), np.array(r_lap.base))   # 全周分は静的レイヤに入る
