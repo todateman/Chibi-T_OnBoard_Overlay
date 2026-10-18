@@ -1,0 +1,15 @@
+# 出力物
+*.mp4
+*.mov
+preview*.png
+!docs/*.png
+
+# ログ・映像データ
+*.CSV
+*.csv
+
+__pycache__/
+.venv/
+.DS_Store
+.claude
+.vscode/
