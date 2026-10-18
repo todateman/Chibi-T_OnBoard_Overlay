@@ -21,7 +21,7 @@ body {
   grid-template-rows: auto auto 1fr auto;
   background: var(--bg); color: var(--fg);
 }
-button, select, input {
+button, select, input, textarea {
   font: inherit; color: var(--fg); background: var(--bg3);
   border: 1px solid var(--line); border-radius: 5px; padding: 4px 8px;
 }
@@ -39,7 +39,8 @@ label { color: var(--muted); }
 .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
 .row.end { justify-content: flex-end; }
 .grow { flex: 1; display: flex; gap: 6px; align-items: center; }
-.grow input { flex: 1; min-width: 80px; }
+.grow input, .grow textarea { flex: 1; min-width: 80px; }
+textarea { resize: vertical; }
 .section-title { font-weight: 600; margin: 4px 0 6px; }
 .section-title small { color: var(--muted); font-weight: normal; }
 

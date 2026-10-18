@@ -1,3 +1,5 @@
+import shutil
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -58,3 +60,17 @@ def test_schema_and_types(client):
     types = client.get("/api/widget-types").json()
     assert any(t["type"] == "map" for t in types)
     assert client.get("/").status_code == 200
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg が無い")
+def test_video_concat(client, seg_dir):
+    files = sorted(str(p) for p in seg_dir.glob("F9_*.MP4"))
+    by_dir = client.get("/api/video-info", params={"video": str(seg_dir)}).json()
+    by_list = client.get("/api/video-info", params={"video": files}).json()
+    assert by_dir == by_list
+    assert [f["path"] for f in by_dir["files"]] == files
+    assert by_dir["duration"] == pytest.approx(3.0, abs=0.1) and by_dir["files"][1]["start"] > 0.9
+    r = client.get("/api/frame", params={"video": files, "t": 1.5, "width": 320, "height": 180})
+    assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
+    assert client.get("/api/video-info", params={"video": "nothing.mp4"}).status_code == 404
+    assert client.get("/api/video-info", params={"video": [files[0], "README.md"]}).status_code == 422

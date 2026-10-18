@@ -1,0 +1,77 @@
+import shutil
+
+import pytest
+
+from ecorun.cli import main
+from ecorun.config import load_preset
+from ecorun.draw import Fonts
+from ecorun.render import OverlayRenderer
+from ecorun.video import (VideoError, VideoSource, encode, expand_videos, extract_frame, probe,
+                          probe_videos)
+
+from conftest import make_video
+
+pytestmark = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg が無い")
+
+
+def test_expand_videos(seg_dir, tmp_path):
+    files = expand_videos([str(seg_dir)])
+    assert [f.rsplit("/", 1)[1] for f in files] == ["F9_0000.MP4", "F9_0001.MP4", "F9_0002.MP4"]
+    # ファイルは指定順のまま
+    assert expand_videos([files[2], files[0]]) == [files[2], files[0]]
+    (tmp_path / "x.CSV").write_text("a")
+    with pytest.raises(VideoError, match="CSV は --video より前"):
+        expand_videos([str(tmp_path / "x.CSV")])
+    with pytest.raises(VideoError, match="見つかりません"):
+        expand_videos([str(tmp_path / "nothing.mp4")])
+    with pytest.raises(VideoError, match="フォルダに動画がありません"):
+        expand_videos([str(tmp_path)])
+
+
+def test_probe_and_locate(seg_dir):
+    src = probe_videos([str(seg_dir)])
+    assert len(src.files) == 3 and (src.width, src.height) == (320, 180)
+    assert src.duration == pytest.approx(3.0, abs=0.1)
+    d0 = src.durations[0]
+    assert src.locate(0.5) == (0, pytest.approx(0.5))
+    assert src.locate(d0) == (1, pytest.approx(0.0))       # 境界は次のファイル
+    assert src.locate(-1)[0] == 0 and src.locate(99) == (2, src.durations[2])
+
+
+def test_mismatched_size_is_rejected(seg_dir, tmp_path):
+    other = make_video(tmp_path / "big.mp4", "red", size="640x360")
+    with pytest.raises(VideoError, match="連結できません"):
+        probe_videos([str(seg_dir / "F9_0000.MP4"), str(other)])
+
+
+def test_extract_frame_picks_segment(seg_dir):
+    src = probe_videos([str(seg_dir)])
+    for t, rgb in [(0.5, (255, 0, 0)), (1.5, (0, 0, 255)), (2.5, (0, 255, 0)), (src.duration, (0, 255, 0))]:
+        px = extract_frame(src, t).getpixel((160, 90))
+        assert all(abs(a - b) < 40 for a, b in zip(px, rgb)), (t, px)
+
+
+def test_concat_only_cli(seg_dir, tmp_path):
+    out = tmp_path / "joined.mp4"
+    main(["--concat-only", "--video", str(seg_dir), "-o", str(out)])
+    assert probe(str(out))[3] == pytest.approx(3.0, abs=0.15)
+
+
+def test_csv_required_without_concat_only(seg_dir, tmp_path):
+    with pytest.raises(SystemExit):
+        main(["--video", str(seg_dir), "-o", str(tmp_path / "x.mp4")])
+
+
+def test_encode_concatenated(seg_dir, tel, tmp_path):
+    src = probe_videos([str(seg_dir)])
+    r = OverlayRenderer(tel, load_preset("minimal"), 30, 30 + src.duration, Fonts())
+    out = tmp_path / "out.mp4"
+    encode(r, str(out), 30, src.duration, src.fps, src)
+    w, h, _, dur = probe(str(out))
+    assert (w, h) == (320, 180) and dur == pytest.approx(3.0, abs=0.15)
+    assert extract_frame(str(out), 2.5).getpixel((160, 90))[1] > 200     # 3 本目(緑)まで入っている
+
+
+def test_single_file_source(seg_dir):
+    src = probe_videos([str(seg_dir / "F9_0001.MP4")])
+    assert isinstance(src, VideoSource) and len(src.files) == 1
