@@ -293,6 +293,15 @@ function tSync() {
   return t + (Number(S.offset) || 0);
 }
 function useVideo() { return !!(S.video && S.videoInfo); }
+// 動画欄は 1 行 1 パス(複数行・フォルダはサーバー側でファイル名順に連結される)
+const videoList = () => S.video.split("\n").map((s) => s.trim()).filter(Boolean);
+const videoQuery = () => videoList().map((v) => `video=${encodeURIComponent(v)}`).join("&");
+function videoFileAt(t) {
+  const files = S.videoInfo?.files || [];
+  let i = files.length - 1;
+  while (i > 0 && files[i].start > t) i--;
+  return files.length > 1 ? { i, n: files.length, f: files[i], local: t - files[i].start } : null;
+}
 function syncTimeline() {
   const sl = $("timeSlider");
   if (useVideo()) {
@@ -306,7 +315,9 @@ function syncTimeline() {
     $("timeInput").value = S.ts.toFixed(1);
   }
   const lap = S.logInfo?.laps.filter((l) => l.t <= S.ts).pop();
-  $("timeLabel").textContent = (useVideo() ? `動画 ${S.videoT.toFixed(1)} s → ` : "") +
+  const vf = useVideo() && videoFileAt(S.videoT);
+  const vfLabel = vf ? ` (${vf.i + 1}/${vf.n} ${vf.f.path.split("/").pop()} ${vf.local.toFixed(1)} s)` : "";
+  $("timeLabel").textContent = (useVideo() ? `動画 ${S.videoT.toFixed(1)} s${vfLabel} → ` : "") +
     `ログ ${S.ts.toFixed(1)} s${S.logInfo ? ` / ${S.logInfo.t_end.toFixed(0)} s` : ""}${lap ? `  LAP ${lap.lap}` : ""}`;
 }
 let frameTimer;
@@ -316,7 +327,7 @@ function updateBackground() {
   clearTimeout(frameTimer);
   frameTimer = setTimeout(() => {
     img.hidden = false;
-    img.src = `/api/frame?video=${encodeURIComponent(S.video)}&t=${S.videoT.toFixed(2)}&width=${canvasW()}&height=${canvasH()}`;
+    img.src = `/api/frame?${videoQuery()}&t=${S.videoT.toFixed(2)}&width=${canvasW()}&height=${canvasH()}`;
   }, S.playing ? 0 : 120);
 }
 function setTime(v) {
@@ -350,9 +361,11 @@ async function loadVideo() {
   saveLocal();
   if (!S.video) { S.videoInfo = null; $("videoInfo").textContent = ""; syncTimeline(); updateBackground(); return; }
   try {
-    S.videoInfo = await api("GET", `/api/video-info?video=${encodeURIComponent(S.video)}`);
+    S.videoInfo = await api("GET", `/api/video-info?${videoQuery()}`);
     const v = S.videoInfo;
-    $("videoInfo").textContent = `${v.width}×${v.height} ${v.fps.toFixed(2)} fps ${v.duration.toFixed(1)} s`;
+    const n = v.files.length > 1 ? `${v.files.length} 本を連結 / 合計 ` : "";
+    $("videoInfo").textContent = `${v.width}×${v.height} ${v.fps.toFixed(2)} fps ${n}${v.duration.toFixed(1)} s`;
+    $("videoInfo").title = v.files.map((f) => `${f.start.toFixed(1).padStart(7)} s  ${f.path}`).join("\n");
     S.videoT = Math.min(S.videoT, v.duration);
   } catch (e) {
     S.videoInfo = null;
@@ -648,13 +661,17 @@ function drawCommand() {
   const sync = S.sync ? ` --sync ${q(S.sync)}` : "";
   const off = Number(S.offset) ? ` --offset ${S.offset}` : "";
   const dur = S.duration ? ` --duration ${S.duration}` : "";
+  const videos = videoList().map(q).join(" ");
   const lines = [
     "# 静止画プレビュー(枠つき)",
     `uv run ecorun-overlay ${csv} --preset ${S.name}${sync}${off} --preview ${S.ts.toFixed(1)} --debug-boxes -o preview.png`,
     S.video ? "# 動画に合成" : "# 透過オーバーレイ(ProRes 4444)",
     S.video
-      ? `uv run ecorun-overlay ${csv} --preset ${S.name} --video ${q(S.video)}${sync}${off}${dur} -o out.mp4`
+      ? `uv run ecorun-overlay ${csv} --preset ${S.name} --video ${videos}${sync}${off}${dur} -o out.mp4`
       : `uv run ecorun-overlay ${csv} --preset ${S.name}${sync}${off}${dur} -o overlay.mov`,
+    ...(S.videoInfo?.files.length > 1
+      ? ["# 動画を連結だけする(オーバーレイなし)", `uv run ecorun-overlay --concat-only --video ${videos} -o joined.mp4`]
+      : []),
     "# レイアウト検査",
     `uv run ecorun-layout lint ${S.name}`,
   ];

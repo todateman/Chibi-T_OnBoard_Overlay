@@ -64,6 +64,7 @@ _lock = threading.Lock()          # 描画は 1 本ずつ(Pillow のフォント
 _tel_cache = LRU(4)
 _renderer_cache = LRU(8)
 _frame_cache = LRU(48)
+_video_cache = LRU(8)
 _fonts: dict[str, Fonts] = {}
 
 
@@ -74,6 +75,25 @@ def _resolve_file(path: str, what: str) -> Path:
     if not p.is_file():
         raise HTTPException(404, f"{what}が見つかりません: {path}")
     return p
+
+
+def _video_source(videos: list[str]):
+    """動画(複数・フォルダ可)→ (キャッシュキー, VideoSource)。各パスはリポジトリ基準の相対パスでもよい"""
+    from ..video import VideoError, expand_videos, probe_videos
+    paths = []
+    for v in videos:
+        p = Path(v).expanduser()
+        if not p.is_absolute():
+            p = ROOT_DIR / p
+        if not p.exists():
+            raise HTTPException(404, f"動画が見つかりません: {v}")
+        paths.append(str(p))
+    try:
+        files = expand_videos(paths)
+        key = tuple((f, Path(f).stat().st_mtime) for f in files)
+        return key, _video_cache.get_or(key, lambda: probe_videos(files))
+    except VideoError as e:
+        raise HTTPException(422, str(e)) from None
 
 
 def _telemetry(csv: str, rpm_on_threshold: float, heading_lookback_s: float) -> Telemetry:
@@ -217,25 +237,28 @@ def get_log_info(csv: str, rpm_on_threshold: float = 300, heading_lookback_s: fl
     }
 
 
-@app.get("/api/video-info", summary="動画の解像度・fps・長さ")
-def get_video_info(video: str):
-    from ..video import probe
-    p = _resolve_file(video, "動画")
-    try:
-        w, h, fps, dur = probe(str(p))
-    except Exception as e:  # noqa: BLE001 ffprobe の失敗はそのまま返す
-        raise HTTPException(422, f"動画を読めません: {e}") from None
-    return {"width": w, "height": h, "fps": fps, "duration": dur}
+VIDEO_DESC = "動画のパス。複数指定(?video=a&video=b)やフォルダはファイル名順に連結して 1 本として扱う"
 
 
-@app.get("/api/frame", summary="動画の 1 フレーム(JPEG)", response_class=Response)
-def get_frame(video: str, t: float = Query(0.0, ge=0), width: int = 1920, height: int = 1080):
+@app.get("/api/video-info", summary="動画の解像度・fps・長さ(連結後の合計)と各ファイルの開始秒")
+def get_video_info(video: list[str] = Query(description=VIDEO_DESC)):
+    _, src = _video_source(video)
+    return {
+        "width": src.width, "height": src.height, "fps": src.fps, "duration": src.duration,
+        "files": [{"path": f, "start": t0, "duration": d}
+                  for f, t0, d in zip(src.files, src.starts, src.durations)],
+    }
+
+
+@app.get("/api/frame", summary="動画の 1 フレーム(JPEG)。t は連結後の通し秒", response_class=Response)
+def get_frame(video: list[str] = Query(description=VIDEO_DESC), t: float = Query(0.0, ge=0),
+              width: int = 1920, height: int = 1080):
     from ..video import extract_frame
-    p = _resolve_file(video, "動画")
-    key = (str(p), p.stat().st_mtime, round(t, 2), width, height)
+    vkey, src = _video_source(video)
+    key = (vkey, round(t, 2), width, height)
 
     def make():
-        img = extract_frame(str(p), t, (width, height))
+        img = extract_frame(src, t, (width, height))
         buf = io.BytesIO()
         img.save(buf, "JPEG", quality=88)
         return buf.getvalue()

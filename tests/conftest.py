@@ -1,4 +1,5 @@
 import math
+import subprocess
 
 import numpy as np
 import pandas as pd
@@ -46,3 +47,24 @@ def synth_csv(tmp_path_factory):
 @pytest.fixture(scope="session")
 def tel(synth_csv):
     return load_log(str(synth_csv))
+
+
+COLORS = ["red", "blue", "lime"]
+
+
+def make_video(path, color, seconds=1.0, size="320x180", rate=10):
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+                    f"color=c={color}:size={size}:rate={rate}", "-t", str(seconds),
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(path)], check=True)
+    return path
+
+
+@pytest.fixture(scope="session")
+def seg_dir(tmp_path_factory):
+    """ドラレコの分割ファイル相当: 色違いの 1 秒動画 3 本(名前順 = 色順)"""
+    d = tmp_path_factory.mktemp("seg")
+    for i, c in enumerate(COLORS):
+        make_video(d / f"F9_{i:04d}.MP4", c)
+    (d / "._F9_0000.MP4").write_bytes(b"")   # macOS のリソースフォーク
+    (d / "memo.txt").write_text("x")
+    return d

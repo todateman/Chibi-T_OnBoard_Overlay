@@ -15,8 +15,8 @@ Honda エコマイレッジチャレンジ(チーム: ちびTインターナシ�
   - `dynamic(img, ts)` : ログ秒 `ts` の値に依存する部分
   - 文字サイズ・余白は基準サイズ(モデルの `REF`)での値を書き、`self.S()` / `self.F()` / `self.T()` で拡縮する。ゲージは基準半径 180
 - `ecorun/render.py` : `OverlayRenderer` が全ウィジェットの static を重ねた静的レイヤを作り、`render(ts)` でそのコピーに dynamic を順に描いて 1920×1080 RGBA を返す。`debug_boxes` で枠と id を描く
-- `ecorun/video.py` : ffprobe、RGBA の raw フレームを stdin パイプで ffmpeg に渡す(`--video` ありなら overlay フィルタで合成して H.264、`.mov` なら ProRes 4444)、1 フレーム抽出
-- `ecorun/cli.py` : `ecorun-overlay`(従来の CLI + `--preset` / `--debug-boxes`)
+- `ecorun/video.py` : ffprobe、RGBA の raw フレームを stdin パイプで ffmpeg に渡す(`--video` ありなら overlay フィルタで合成して H.264、`.mov` なら ProRes 4444)、1 フレーム抽出。複数の動画(フォルダ可)は `probe_videos()` で `VideoSource` にまとめ、concat demuxer で 1 本として読む(`locate()` で通し秒 → ファイルと秒)
+- `ecorun/cli.py` : `ecorun-overlay`(従来の CLI + `--preset` / `--debug-boxes`、`--video` は複数可、`--concat-only`)
 - `ecorun/layout.py` : `ecorun-layout`(list / widgets / schema / validate / lint)。lint のルールもここ
 - `ecorun/gui/server.py` + `static/` : `ecorun-gui`。FastAPI + ビルド不要の素の JS。プレビューは `/api/render` で本番と同じ描画。`/api/events`(SSE)で presets/ の外部変更を通知
 - `presets/*.toml` : default / f9_mask / minimal
@@ -71,6 +71,8 @@ uv run ecorun-overlay sampledata/LOG0612.CSV --preview 1040 -o preview_old.png  
 
 # 短い区間で合成・同期を確認
 uv run ecorun-overlay sampledata/LOG0650.CSV --preset f9_mask --video sample.mp4 --sync 15:12:20 --duration 10 -o test.mp4
+# 分割動画はフォルダか複数ファイルで(連結だけなら --concat-only)
+uv run ecorun-overlay sampledata/LOG0650.CSV --preset f9_mask --video F9/ --sync 15:12:20 -o test.mp4
 
 uv run pytest
 ```
@@ -83,6 +85,4 @@ uv run pytest
 - 同期の半自動化: 動画のオプティカルフロー、またはドラレコ焼き込み速度の OCR から発進点を検出し、ログと突き合わせる
 - GUI: 配置禁止帯をキャンバス上でドラッグ編集できるようにする、複数ウィジェットの同時選択・整列
 - 勾配の表示(標高はグラフ表示済み。GPS 標高は 0.1 m 刻みで揺れるので平滑化が必要)
-- VSYSTO F9 はドライブレコーダーであることから 5分 ごとに動画が分割される。  
-  一連の動画を選択し、まとめて処理できるようにする必要がある。
   
