@@ -4,6 +4,8 @@ version = "0.2.0"
 description = "エコラン用テレメトリ・オーバーレイ生成ツール(レイアウト GUI エディタ付き)"
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
     "fastapi>=0.110",
     "numpy>=1.23",

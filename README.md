@@ -200,4 +200,6 @@ uv run pytest              # テスト(合成ログを使うので CSV は不要
 
 ## ライセンス
 
-未定
+[MIT License](LICENSE)
+
+ffmpeg は同梱せず、外部コマンドとして呼び出している。ffmpeg 自体のライセンスは各自のインストールに従う。
