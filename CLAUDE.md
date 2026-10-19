@@ -20,7 +20,8 @@ Honda エコマイレッジチャレンジ(チーム: ちびTインターナシ�
 - `ecorun/timemap.py` : 動画秒 → ログ秒の対応 `TimeMap`(区間ごとに offset。従来の `--sync` は `TimeMap.constant`)と、OCR 結果 `OsdSegment` の JSON 入出力
 - `ecorun/ocrsync.py` : `ecorun-sync`。焼き込み日時(`OSD_TIME_BOX`)を Tesseract で読む → 差(焼き込み時刻 − 動画秒)が揃う連続を区間に → 境目を二分探索 → 秒の表示が変わるフレームで秒未満を補正。`--sync auto` / `--sync FILE.json` から使う
 - `ecorun/layout.py` : `ecorun-layout`(list / widgets / schema / validate / lint)。lint のルールもここ
-- `ecorun/gui/server.py` + `static/` : `ecorun-gui`。FastAPI + ビルド不要の素の JS。プレビューは `/api/render` で本番と同じ描画。`/api/events`(SSE)で presets/ の外部変更を通知
+- `ecorun/gui/server.py` + `static/` : `ecorun-gui`。FastAPI + ビルド不要の素の JS。プレビューは `/api/render` で本番と同じ描画。`/api/events`(SSE)で presets/ の外部変更を通知。再生中の背景は `/api/video-file` を `<video>` で流し、一時停止中は `/api/frame` の静止画
+- `ecorun/gui/export.py` : GUI の「書き出し」。`/api/export` が画面のプリセット(と OCR の区間)を一時ファイルに書き、`python -m ecorun.cli` を別プロセスで実行して進捗(`N/M frames ETA`)を読む。1 本ずつ、中止はプロセスグループごと
 - `presets/*.toml` : default / f9_mask / minimal
 - `tests/` : pytest。合成ログ(`conftest.py`)を使うので sampledata が無くても動く
 
@@ -51,6 +52,12 @@ Honda エコマイレッジチャレンジ(チーム: ちびTインターナシ�
 - `ラップ数` = 0 はスタート前。1 周は約 2.2 km
 - `loc` 列(`to` / `su`)の意味は未確認。現状は未使用
 - 燃圧の列が無い → 燃圧グラフは表示しない(`OPTIONAL_COLS`)
+
+### 2025 年のフォーマット(LOG0443.CSV、2025/06/14 鈴鹿で取得、1 Hz。リポジトリ外)
+
+- 列は `記録日時,速度(km/h),ラップ数,走行時間,回転数,走行距離,積算燃料,燃費,lat,lon,温度` のみ。標高・気圧・気温・湿度・燃圧が無い → `alt_graph` / `fuel_p_graph` は省き、`env` はある項目(エンジン温度)だけ並べる
+- GPS 測位前(先頭の約 380 行)は `記録日時` が空 → その行は捨てられ、測位後がログ開始になる
+- `温度` に 0.00 / 7.00 / 8.00 が混ざる(ロガー側の桁落ちと思われる)。未対処
 
 ## レイアウトの方針(VSYSTO F9 ドラレコ、1920×1080、ローアングル前方カメラ)
 

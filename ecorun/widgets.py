@@ -154,11 +154,18 @@ ENV_ITEMS = {
 
 
 class Env(WidgetImpl):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.items = [k for k in self.cfg.items if self.ctx.tel.has(k)]   # ログに無い項目は省く
+
+    def available(self):
+        return bool(self.items)
+
     def static(self, img):
         self.panel(ImageDraw.Draw(img), r=10)
 
     def dynamic(self, img, ts):
-        items = self.cfg.items
+        items = self.items
         if not items:
             return
         d, tel, S = ImageDraw.Draw(img), self.ctx.tel, self.S
@@ -402,6 +409,9 @@ class ChartBase(WidgetImpl):
 
 
 class AltGraph(ChartBase):
+    def available(self):
+        return self.ctx.tel.has("alt")
+
     def static(self, img):
         """標高: 出力区間全体のプロファイル(GPS 測位中のみ)"""
         d, c, ctx, S = ImageDraw.Draw(img), self.c, self.ctx, self.S
