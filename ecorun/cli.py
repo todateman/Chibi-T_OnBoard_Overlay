@@ -31,10 +31,11 @@ import sys
 from .config import DEFAULT_PRESET, PresetError, load_preset
 from .draw import Fonts
 from .ocrsync import SyncError, add_ocr_args, check_against_log, describe, detect_cli
+from .parallel import default_jobs
 from .render import OverlayRenderer, preview_image
 from .telemetry import LogFormatError, Telemetry, load_log, parse_sync
 from .timemap import TimeMap, osd_from_json
-from .video import VideoError, VideoSource, probe_videos
+from .video import ENCODERS, X264_PRESETS, VideoError, VideoSource, probe_videos
 
 FPS_DEFAULT = 30
 
@@ -90,7 +91,13 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--debug-boxes", action="store_true", help="各ウィジェットの枠と id、配置禁止帯を描く(--preview 向け)")
     ap.add_argument("--fps", type=float, default=FPS_DEFAULT)
     ap.add_argument("--font", help="日本語フォント (.ttf/.ttc) のパス(プリセットの theme.font より優先)")
-    ap.add_argument("--crf", type=int, default=18)
+    ap.add_argument("--crf", type=int, default=18, help="H.264 の画質(x264 のとき。既定 18、小さいほど高画質)")
+    ap.add_argument("--encoder", choices=ENCODERS, default="auto",
+                    help="H.264 のエンコーダ。auto は macOS なら videotoolbox(ハードウェア)、それ以外は x264")
+    ap.add_argument("--x264-preset", choices=X264_PRESETS, default="medium",
+                    help="x264 の速さと圧縮率(既定 medium。veryfast なら約 2 倍速)")
+    ap.add_argument("--jobs", type=int, default=default_jobs(),
+                    help=f"描画のプロセス数(既定 {default_jobs()}。1 なら並列にしない)")
     add_ocr_args(ap, "--sync-step")
     ap.add_argument("--mask-osd", action="store_true", help="(非推奨)--preset f9_mask と同じ")
     return ap
@@ -187,7 +194,8 @@ def main(argv=None):
 
     fps = src.fps if src else args.fps
     r = OverlayRenderer(tel, preset, t_start, max(t_start, t_end), fonts, args.debug_boxes)
-    encode(r, args.output, tm, duration, fps, src, args.crf, start=start)
+    encode(r, args.output, tm, duration, fps, src, args.crf, start=start,
+           encoder=args.encoder, x264_preset=args.x264_preset, jobs=max(1, args.jobs))
     print(f"done → {args.output}")
 
 

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import bisect
+import functools
 import io
 import os
 import shutil
@@ -20,10 +21,15 @@ from pathlib import Path
 
 from PIL import Image
 
+from .parallel import render_frames
 from .render import OverlayRenderer
 from .timemap import TimeMap
 
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".ts"}
+ENCODERS = ("auto", "x264", "videotoolbox")
+X264_PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow")
+# h264_videotoolbox の固定品質(1〜100、大きいほど高画質)。65 で元動画(F9、約 4.4 Mbps)に対し約 8 Mbps
+VT_QUALITY = 65
 
 
 class VideoError(Exception):
@@ -156,23 +162,48 @@ def extract_frame(video: str | VideoSource, t: float, size: tuple[int, int] | No
     return Image.open(io.BytesIO(out)).convert("RGB")
 
 
+@functools.cache
+def _ffmpeg_encoders() -> str:
+    return subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True).stdout
+
+
+def resolve_encoder(name: str = "auto") -> str:
+    """--encoder → "x264" か "videotoolbox"。auto は macOS で h264_videotoolbox が使えればそちら
+    (libx264 medium は 1080p で約 70 fps が上限で、描画と CPU を取り合う。videotoolbox は約 240 fps)"""
+    if name not in ENCODERS:
+        raise ValueError(f"未知のエンコーダ: {name}")
+    if name == "auto":
+        ok = sys.platform == "darwin" and "h264_videotoolbox" in _ffmpeg_encoders()
+        return "videotoolbox" if ok else "x264"
+    return name
+
+
+def h264_args(encoder: str, crf: int = 18, x264_preset: str = "medium") -> list[str]:
+    if encoder == "videotoolbox":
+        return ["-c:v", "h264_videotoolbox", "-q:v", str(VT_QUALITY)]
+    return ["-c:v", "libx264", "-preset", x264_preset, "-crf", str(crf)]
+
+
 def encode(r: OverlayRenderer, out_path: str, t_sync: float | TimeMap, duration: float, fps: float,
-           video: VideoSource | None = None, crf: int = 18, start: float = 0.0):
+           video: VideoSource | None = None, crf: int = 18, start: float = 0.0,
+           encoder: str = "auto", x264_preset: str = "medium", jobs: int = 1):
     """RGBA の raw フレームを stdin パイプで ffmpeg に渡す。
     video あり → overlay フィルタで合成して H.264 / なし → ProRes 4444(アルファ付き .mov)。
     t_sync は動画 0 秒目のログ秒(従来の --sync)か、区間ごとの対応 TimeMap。
-    start は書き出し開始位置(動画の通し秒)。出力 k 枚目のログ秒は tm.to_log(start + k / fps)"""
+    start は書き出し開始位置(動画の通し秒)。出力 k 枚目のログ秒は tm.to_log(start + k / fps)。
+    encoder は H.264 のエンコーダ(ENCODERS)、jobs は描画のプロセス数(1 なら並列にしない)"""
     if not shutil.which("ffmpeg"):
         sys.exit("ffmpeg が見つかりません")
     if video is None and not out_path.lower().endswith(".mov"):
         sys.exit("--video なしの場合、出力は .mov(透過 ProRes 4444)か .png(--preview)にしてください")
     with input_args(video) if video else nullcontext([]) as video_in:
         tm = t_sync if isinstance(t_sync, TimeMap) else TimeMap.constant(t_sync)
-        _encode(r, out_path, tm, duration, fps, video, video_in, crf, start)
+        venc = h264_args(resolve_encoder(encoder), crf, x264_preset) if video else []
+        _encode(r, out_path, tm, duration, fps, video, video_in, venc, start, jobs)
 
 
 def _encode(r: OverlayRenderer, out_path: str, tm: TimeMap, duration: float, fps: float,
-            video: VideoSource | None, video_in: list[str], crf: int, start: float):
+            video: VideoSource | None, video_in: list[str], venc: list[str], start: float, jobs: int):
     tel = r.tel
     n_out = n_frames = int(duration * fps)
     if video:
@@ -187,21 +218,23 @@ def _encode(r: OverlayRenderer, out_path: str, tm: TimeMap, duration: float, fps
         seek = ["-ss", f"{start:.3f}"] if start > 0 else []
         cmd = ["ffmpeg", "-y", "-loglevel", "error", *seek, *video_in, *raw_in,
                "-filter_complex", f"[1:v]scale={vw}:{vh}:flags=lanczos[ov];[0:v][ov]overlay=0:0:shortest=1[v]",
-               "-map", "[v]", "-map", "0:a?", "-c:v", "libx264", "-preset", "medium",
-               "-crf", str(crf), "-pix_fmt", "yuv420p", "-c:a", "copy",
+               "-map", "[v]", "-map", "0:a?", *venc, "-pix_fmt", "yuv420p", "-c:a", "copy",
                "-frames:v", str(n_out), "-t", f"{duration + 0.5 / fps:.3f}", out_path]
     else:
         cmd = ["ffmpeg", "-y", "-loglevel", "error", *raw_in,
                "-c:v", "prores_ks", "-profile:v", "4444", "-pix_fmt", "yuva444p10le", out_path]
 
+    t0, t1 = float(tel.t[0]), float(tel.t[-1])
+    ts_list = [min(max(tm.to_log(start + k / fps), t0), t1) for k in range(n_frames)]
+    enc = venc[1] if venc else "prores_ks"
+    print(f"{enc} / 描画 {jobs} プロセス", flush=True)
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
     t_wall = t_print = time.time()
     k = 0
+    frames = render_frames(r, ts_list, jobs)
     try:
-        for k in range(n_frames):
-            ts = tm.to_log(start + k / fps)
-            frame = r.render(min(max(ts, tel.t[0]), tel.t[-1]))
-            proc.stdin.write(frame.tobytes())
+        for k, frame in enumerate(frames):
+            proc.stdin.write(frame)
             if k == 0 or time.time() - t_print >= 1.0:      # 進捗は 1 秒ごと(GUI はこれを読んで進捗バーを出す)
                 t_print = time.time()
                 el = t_print - t_wall
@@ -210,6 +243,7 @@ def _encode(r: OverlayRenderer, out_path: str, tm: TimeMap, duration: float, fps
     except BrokenPipeError:
         pass  # 動画が先に終わった
     finally:
+        frames.close()                                   # 描画プロセスを止める
         if proc.stdin:
             try:
                 proc.stdin.close()

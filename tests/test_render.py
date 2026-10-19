@@ -3,6 +3,8 @@ import pytest
 from PIL import Image
 
 from ecorun.config import WIDGET_BY_TYPE, Preset, load_preset, parse_preset
+from ecorun.draw import Fonts
+from ecorun.parallel import render_frames
 from ecorun.render import OverlayRenderer
 from ecorun.telemetry import load_log
 from conftest import write_synthetic_log
@@ -94,3 +96,21 @@ def test_map_on_segments_all_laps_is_static(tel):
     r_all.render(60.0)
     assert r_all.widgets[0]._lap_layers == {}
     assert not np.array_equal(np.array(r_all.base), np.array(r_lap.base))   # 全周分は静的レイヤに入る
+
+
+def test_parallel_frames_match_serial(tel):
+    """複数プロセスで描いても、直列と同じフレームが同じ順で出る"""
+    r = OverlayRenderer(tel, load_preset("default"), 30, 60, Fonts())
+    ts = [30 + 0.37 * i for i in range(9)]
+    serial = [r.render(t).tobytes() for t in ts]
+    assert [bytes(b) for b in render_frames(r, ts, 3)] == serial
+
+
+def test_parallel_frames_stop_midway(tel):
+    """途中でやめても(BrokenPipe などで generator を閉じても)描画プロセスが止まる"""
+    import multiprocessing as mp
+    r = OverlayRenderer(tel, load_preset("minimal"), 30, 60, Fonts())
+    frames = render_frames(r, [30 + 0.1 * i for i in range(50)], 2)
+    next(frames)
+    frames.close()
+    assert not mp.active_children()

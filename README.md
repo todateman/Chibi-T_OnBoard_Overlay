@@ -53,7 +53,9 @@ uv run ecorun-overlay LOG0650.CSV --preset minimal --preview 150 --debug-boxes -
 uv run ecorun-overlay LOG0650.CSV --preset f9_mask --video F9_0001.mp4 --sync 15:10:30 -o out.mp4
 ```
 
-- 出力は H.264(`--crf` で画質指定、既定 18)。音声はコピーされる
+- 出力は H.264。音声はコピーされる
+- エンコーダは macOS ならハードウェアの VideoToolbox、それ以外は x264(`--encoder` で切替、x264 の画質は `--crf`、既定 18)
+- 描画は既定で 4 プロセス並列(`--jobs`)。Apple M5 で 1080p 25 fps の 30 分の動画が約 4 分で書き出せる
 - オーバーレイは 1920×1080 基準で描画し、動画の解像度へ自動スケール
 - フレームレートと長さは動画から自動取得
 
@@ -126,7 +128,10 @@ ProRes 4444(アルファ付き)を出力する。DaVinci Resolve や Premiere �
 | `--debug-boxes` | ウィジェットの枠と id、配置禁止帯を描く |
 | `--fps` | 透過出力時のフレームレート(既定 30。`--video` 指定時は動画に合わせる) |
 | `--font` | 日本語フォント(`.ttf` / `.ttc`)のパス。プリセットの `theme.font` より優先 |
-| `--crf` | H.264 の画質(既定 18、小さいほど高画質) |
+| `--crf` | x264 の画質(既定 18、小さいほど高画質) |
+| `--encoder` | H.264 のエンコーダ。`auto`(既定。macOS なら `videotoolbox`、それ以外は `x264`)/ `x264` / `videotoolbox` |
+| `--x264-preset` | x264 の速さと圧縮率(既定 `medium`。`veryfast` で約 2 倍速) |
+| `--jobs` | 描画のプロセス数(既定はコア数の半分、最大 4)。`1` で並列にしない |
 | `--mask-osd` | (非推奨)`--preset f9_mask` と同じ |
 
 ## 動画とログの同期
