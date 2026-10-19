@@ -31,6 +31,7 @@ from ..draw import Fonts
 from ..layout import lint_preset, widget_types
 from ..render import OverlayRenderer
 from ..telemetry import LogFormatError, Telemetry, load_log, parse_sync
+from ..timemap import Segment, TimeMap
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -65,6 +66,7 @@ _tel_cache = LRU(4)
 _renderer_cache = LRU(8)
 _frame_cache = LRU(48)
 _video_cache = LRU(8)
+_sync_cache = LRU(8)
 _fonts: dict[str, Fonts] = {}
 
 
@@ -269,6 +271,40 @@ def get_frame(video: list[str] = Query(description=VIDEO_DESC), t: float = Query
     return Response(data, media_type="image/jpeg")
 
 
+class AutoSyncBody(BaseModel):
+    video: list[str] = Field(description=VIDEO_DESC)
+    csv: str | None = Field(None, description="CSV のパス。指定するとログ秒(offset)と範囲の検査を返す")
+    step: float = Field(10.0, gt=0, description="焼き込みを読む間隔 [秒](ecorun-sync --step と同じ)")
+
+
+@app.post("/api/auto-sync", summary="焼き込み日時を OCR して区間ごとの同期を求める(長い動画では数十秒かかる)")
+def auto_sync(body: AutoSyncBody):
+    from ..ocrsync import SyncError, check_against_log, detect
+    vkey, src = _video_source(body.video)
+    try:
+        segs = _sync_cache.get_or((vkey, body.step), lambda: detect(src, body.step))
+    except SyncError as e:
+        raise HTTPException(422, str(e)) from None
+    out = {"segments": [{"v0": s.v0, "v1": s.v1, "wall": s.wall0.isoformat(timespec="milliseconds")} for s in segs],
+           "warnings": []}
+    if body.csv:
+        tel = _telemetry(body.csv, 300, 3.0)          # t0 だけ使うので閾値は何でもよい
+        t0 = tel.t0.to_pydatetime()
+        try:
+            out["warnings"] = check_against_log(segs, t0, float(tel.t[-1]))
+        except SyncError as e:
+            raise HTTPException(422, str(e)) from None
+        for d, seg in zip(out["segments"], TimeMap.from_osd(segs, t0).segments):
+            d["offset"] = seg.offset
+    return out
+
+
+class TimeMapSegment(BaseModel):
+    v0: float = Field(description="区間の開始(動画の通し秒)")
+    v1: float = Field(description="区間の終了")
+    offset: float = Field(description="ログ秒 = 動画秒 + offset")
+
+
 class RenderBody(BaseModel):
     preset: dict = Field(description="プリセット(未保存の編集中の内容でよい)")
     csv: str = Field(description="CSV のパス(リポジトリ基準の相対パスまたは絶対パス)")
@@ -278,6 +314,7 @@ class RenderBody(BaseModel):
     start: float | None = Field(None, ge=0, description="書き出し開始位置(動画 0 秒目 = sync からの秒。CLI の --start と同じ)")
     end: float | None = Field(None, ge=0, description="書き出し終了位置(CLI の --end と同じ)。省略時は duration、それも無ければログ末尾まで")
     duration: float | None = Field(None, description="出力区間の長さ [秒](start からの長さ)。end があればそちらを優先")
+    timemap: list[TimeMapSegment] | None = Field(None, description="区間ごとの同期(/api/auto-sync の結果)。あれば sync より優先")
     debug_boxes: bool = Field(False, description="ウィジェット枠と id を描く")
     font: str = Field("", description="フォントのパス(空ならプリセットの theme.font → 自動検出)")
 
@@ -286,16 +323,17 @@ class RenderBody(BaseModel):
 def render(body: RenderBody):
     p = _parse(body.preset)
     tel = _telemetry(body.csv, p.data.rpm_on_threshold, p.data.heading_lookback_s)
-    t_sync = parse_sync(tel, body.sync) + body.offset
-    start = body.start or 0.0
-    t_start = max(0.0, t_sync + start)
-    if body.end is not None:
-        t_end = t_sync + body.end
-    elif body.duration is not None:
-        t_end = t_sync + start + body.duration
+    if body.timemap:
+        tm = TimeMap([Segment(s.v0, s.v1, s.offset) for s in body.timemap]).shifted(body.offset)
     else:
-        t_end = float(tel.t[-1])
-    t_end = max(t_start, min(float(tel.t[-1]), t_end))
+        tm = TimeMap.constant(parse_sync(tel, body.sync) + body.offset)
+    start = body.start or 0.0
+    v_end = body.end if body.end is not None else (start + body.duration if body.duration is not None else None)
+    if v_end is None and not tm.is_constant:
+        v_end = tm.segments[-1].v1                    # 区間ごとの同期なら動画の末尾まで
+    lo, hi = (tm.to_log(start), float(tel.t[-1])) if v_end is None else tm.log_range(start, v_end)
+    t_start = max(0.0, lo)
+    t_end = max(t_start, min(float(tel.t[-1]), hi))
     font = body.font or p.theme.font
     key = (id(tel), hashlib.sha1(json.dumps(preset_to_dict(p), sort_keys=True).encode()).hexdigest(),
            round(t_start, 3), round(t_end, 3), font, body.debug_boxes)

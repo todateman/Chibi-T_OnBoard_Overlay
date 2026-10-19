@@ -18,6 +18,10 @@
 
   # 6) オーバーレイなしで連結だけ(再エンコードなし)
   ecorun-overlay --concat-only --video F9/*.MP4 -o joined.mp4
+
+  # 7) 焼き込み日時を OCR して自動で同期(時刻の飛びごとに区間を分ける。要 Tesseract)
+  ecorun-overlay LOG0650.CSV --preset f9_mask --video F9/ --sync auto -o out.mp4
+  ecorun-overlay LOG0650.CSV --preset f9_mask --video F9/ --sync sync.json -o out.mp4   # ecorun-sync -o の結果
 """
 from __future__ import annotations
 
@@ -26,9 +30,11 @@ import sys
 
 from .config import DEFAULT_PRESET, PresetError, load_preset
 from .draw import Fonts
+from .ocrsync import SyncError, add_ocr_args, check_against_log, describe, detect_cli
 from .render import OverlayRenderer, preview_image
-from .telemetry import LogFormatError, load_log, parse_sync
-from .video import VideoError, probe_videos
+from .telemetry import LogFormatError, Telemetry, load_log, parse_sync
+from .timemap import TimeMap, osd_from_json
+from .video import VideoError, VideoSource, probe_videos
 
 FPS_DEFAULT = 30
 
@@ -72,7 +78,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--video", nargs="+", metavar="VIDEO",
                     help="合成する車載動画。複数ファイル・フォルダを指定するとファイル名順に連結して 1 本として扱う")
     ap.add_argument("--concat-only", action="store_true", help="--video を連結しただけの動画を書き出す(オーバーレイなし・再エンコードなし)")
-    ap.add_argument("--sync", help="動画 0 秒目に対応するログ時刻 (例 11:16:50) またはログ開始からの秒")
+    ap.add_argument("--sync", help="動画 0 秒目に対応するログ時刻 (例 11:16:50) またはログ開始からの秒。"
+                                   "auto で焼き込み日時を OCR して自動同期、.json なら ecorun-sync の結果を使う")
     ap.add_argument("--offset", type=float, default=0.0, help="同期の微調整 [秒]")
     ap.add_argument("--start", type=parse_position, metavar="POS",
                     help="書き出し開始位置。動画(連結後)の再生位置を 秒 か [H:]MM:SS で(既定 0)")
@@ -84,15 +91,40 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--fps", type=float, default=FPS_DEFAULT)
     ap.add_argument("--font", help="日本語フォント (.ttf/.ttc) のパス(プリセットの theme.font より優先)")
     ap.add_argument("--crf", type=int, default=18)
+    add_ocr_args(ap, "--sync-step")
     ap.add_argument("--mask-osd", action="store_true", help="(非推奨)--preset f9_mask と同じ")
     return ap
+
+
+def build_timemap(sync: str | None, offset: float, tel: Telemetry, src: VideoSource | None,
+                  step: float, box) -> TimeMap:
+    """--sync → 動画秒からログ秒への対応。auto / .json は焼き込み日時の区間ごと、それ以外は従来の 1 本の直線"""
+    s = (sync or "").strip()
+    if s.lower() == "auto" or s.lower().endswith(".json"):
+        if s.lower() == "auto":
+            if src is None:
+                raise SyncError("--sync auto には --video が必要です")
+            segs = detect_cli(src, step, box)
+        else:
+            try:
+                segs = osd_from_json(s)
+            except (OSError, ValueError, KeyError) as e:
+                raise SyncError(f"同期ファイルを読めません: {s}: {e}") from None
+        t0 = tel.t0.to_pydatetime()
+        print(describe(segs, t0))
+        for w in check_against_log(segs, t0, float(tel.t[-1])):
+            print("警告: " + w, file=sys.stderr)
+        tm = TimeMap.from_osd(segs, t0)
+    else:
+        tm = TimeMap.constant(parse_sync(tel, s or None))
+    return tm.shifted(offset)
 
 
 def main(argv=None):
     ap = build_parser()
     args = ap.parse_args(argv)
     src = None
-    if args.video and args.preview is None:
+    if args.video and (args.preview is None or (args.sync or "").strip().lower() == "auto"):
         try:
             src = probe_videos(args.video)
         except VideoError as e:
@@ -125,15 +157,24 @@ def main(argv=None):
     except (PresetError, LogFormatError) as e:
         sys.exit(str(e))
     fonts = Fonts(args.font or preset.theme.font or None)
-    t_sync = parse_sync(tel, args.sync) + args.offset
     try:
-        start, duration = resolve_range(args.start, args.end, args.duration,
-                                        src.duration if src else float(tel.t[-1]) - t_sync, clamp=src is not None)
+        tm = build_timemap(args.sync, args.offset, tel, src, args.sync_step, args.osd_box)
+    except SyncError as e:
+        sys.exit(str(e))
+    if src:
+        total = src.duration
+    elif tm.is_constant:
+        total = float(tel.t[-1]) - tm.to_log(0)
+    else:
+        total = tm.segments[-1].v1
+    try:
+        start, duration = resolve_range(args.start, args.end, args.duration, total, clamp=src is not None)
     except ValueError as e:
         ap.error(str(e))
     # 区間全体のグラフなどは書き出す区間に合わせる(プレビューも本番と同じ見た目にする)
-    t_start = max(0.0, t_sync + start)
-    t_end = min(float(tel.t[-1]), t_sync + start + duration)
+    lo, hi = tm.log_range(start, start + duration)
+    t_start = max(0.0, lo)
+    t_end = min(float(tel.t[-1]), hi)
 
     # ---- プレビュー ----
     if args.preview is not None:
@@ -146,7 +187,7 @@ def main(argv=None):
 
     fps = src.fps if src else args.fps
     r = OverlayRenderer(tel, preset, t_start, max(t_start, t_end), fonts, args.debug_boxes)
-    encode(r, args.output, t_sync, duration, fps, src, args.crf, start=start)
+    encode(r, args.output, tm, duration, fps, src, args.crf, start=start)
     print(f"done → {args.output}")
 
 

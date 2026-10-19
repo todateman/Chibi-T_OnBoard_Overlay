@@ -16,6 +16,7 @@ const S = {
   issues: [], errors: [], skipped: [],
   csv: "", logInfo: null, ts: 0,
   sync: "", offset: 0, start: null, end: null,
+  timemap: null,                  // OCR の区間ごとの同期 { key: 動画欄, segments: [{v0, v1, offset, wall}] }
   video: "", videoInfo: null, videoT: 0,
   snap: 10, showKeepout: true, showBoxes: true, showDisabled: false,
   playing: false,
@@ -63,7 +64,7 @@ function banner(msg, buttons = [], kind = "") {
   b.hidden = false;
 }
 function saveLocal() {
-  const keep = { name: S.name, csv: S.csv, sync: S.sync, offset: S.offset, start: S.start, end: S.end,
+  const keep = { name: S.name, csv: S.csv, sync: S.sync, offset: S.offset, start: S.start, end: S.end, timemap: S.timemap,
     video: S.video, snap: S.snap, showKeepout: S.showKeepout, showBoxes: S.showBoxes, showDisabled: S.showDisabled, ts: S.ts, videoT: S.videoT };
   try { localStorage.setItem(LS_KEY, JSON.stringify(keep)); } catch { /* 使えない環境 */ }
 }
@@ -248,6 +249,7 @@ async function doRender() {
     const res = await api("POST", "/api/render", {
       preset: S.preset, csv: S.csv, ts: S.ts, sync: S.sync || null, offset: S.offset || 0,
       start: S.start, end: S.end,
+      timemap: activeTimemap()?.segments.map(({ v0, v1, offset }) => ({ v0, v1, offset })) ?? null,
     });
     S.skipped = (res.headers.get("X-Skipped-Widgets") || "").split(",").filter(Boolean);
     const url = URL.createObjectURL(await res.blob());
@@ -282,7 +284,7 @@ function tSync() {
   // CLI の --sync と同じ解釈(秒数 or ログ開始日の時刻)。ログ情報が無ければ 0
   const s = (S.sync || "").trim();
   let t = 0;
-  if (s) {
+  if (s && s !== "auto") {
     if (/^-?\d+(\.\d+)?$/.test(s)) t = Number(s);
     else if (S.logInfo) {
       const [hh, mm, ss] = s.split(":").map(Number);
@@ -293,6 +295,22 @@ function tSync() {
   return t + (Number(S.offset) || 0);
 }
 function useVideo() { return !!(S.video && S.videoInfo); }
+// OCR の同期は、取得したときの動画欄と今の動画欄が同じで、ログ秒(offset)があるときだけ使う
+function activeTimemap() {
+  const tm = S.timemap;
+  return useVideo() && tm && tm.key === S.video && tm.segments.every((g) => g.offset != null) ? tm : null;
+}
+function segmentAt(v) {
+  const segs = activeTimemap()?.segments || [];
+  let i = segs.length - 1;
+  while (i > 0 && segs[i].v0 > v) i--;
+  return segs.length ? { i, n: segs.length, seg: segs[i] } : null;
+}
+// 動画秒 → ログ秒(CLI の TimeMap.to_log と同じ。区間の外は端の区間で外挿)
+function logAt(v) {
+  const g = segmentAt(v);
+  return g ? v + g.seg.offset + (Number(S.offset) || 0) : tSync() + v;
+}
 // スライダーの位置を --start / --end と同じ基準(動画の秒、動画が無ければ --sync からの秒)で返す
 function currentPos() { return Math.max(0, Math.round((useVideo() ? S.videoT : S.ts - tSync()) * 10) / 10); }
 // 動画欄は 1 行 1 パス(複数行・フォルダはサーバー側でファイル名順に連結される)
@@ -310,7 +328,7 @@ function syncTimeline() {
     sl.max = S.videoInfo.duration.toFixed(1);
     sl.value = S.videoT;
     $("timeInput").value = S.videoT.toFixed(1);
-    S.ts = tSync() + S.videoT;
+    S.ts = logAt(S.videoT);
   } else {
     sl.max = (S.logInfo?.t_end ?? 100).toFixed(1);
     sl.value = S.ts;
@@ -318,7 +336,9 @@ function syncTimeline() {
   }
   const lap = S.logInfo?.laps.filter((l) => l.t <= S.ts).pop();
   const vf = useVideo() && videoFileAt(S.videoT);
-  const vfLabel = vf ? ` (${vf.i + 1}/${vf.n} ${vf.f.path.split("/").pop()} ${vf.local.toFixed(1)} s)` : "";
+  const sg = useVideo() && segmentAt(S.videoT);
+  const vfLabel = (vf ? ` (${vf.i + 1}/${vf.n} ${vf.f.path.split("/").pop()} ${vf.local.toFixed(1)} s)` : "") +
+    (sg && sg.n > 1 ? ` 区間 ${sg.i + 1}/${sg.n}` : "");
   $("timeLabel").textContent = (useVideo() ? `動画 ${S.videoT.toFixed(1)} s${vfLabel} → ` : "") +
     `ログ ${S.ts.toFixed(1)} s${S.logInfo ? ` / ${S.logInfo.t_end.toFixed(0)} s` : ""}${lap ? `  LAP ${lap.lap}` : ""}`;
 }
@@ -358,8 +378,36 @@ async function loadLog() {
   scheduleRender(0);
   drawCommand();
 }
+async function autoSync() {
+  if (!useVideo()) { status("先に動画を読み込んでください"); return; }
+  if (!S.csv) { status("先にログ(CSV)を指定してください"); return; }
+  const btn = $("btnAutoSync");
+  btn.disabled = true;
+  btn.textContent = "解析中…";
+  status("焼き込み日時を読み取っています(長い動画では数十秒かかります)", 0);
+  try {
+    const r = await api("POST", "/api/auto-sync", { video: videoList(), csv: S.csv });
+    S.timemap = { key: S.video, segments: r.segments };
+    S.sync = "auto";
+    $("syncInput").value = "auto";
+    const n = r.segments.length;
+    status(`自動同期: ${n} 区間` + (r.warnings.length ? `(${r.warnings.join(" / ")})` : ""), r.warnings.length ? 0 : 4000);
+    $("syncInput").title = r.segments.map((g, i) =>
+      `区間 ${i + 1}: 動画 ${g.v0.toFixed(2)}〜${g.v1.toFixed(2)} s  焼き込み ${g.wall.replace("T", " ")}`).join("\n");
+    saveLocal(); syncTimeline(); updateBackground(); scheduleRender(0); drawCommand();
+  } catch (e) {
+    status(`自動同期できません: ${e.message}`, 0);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "OCR で自動同期";
+  }
+}
 async function loadVideo() {
   S.video = $("videoInput").value.trim();
+  if (S.timemap && S.timemap.key !== S.video) {          // 別の動画の OCR 結果は使わない
+    S.timemap = null;
+    if (S.sync === "auto") { S.sync = ""; $("syncInput").value = ""; }
+  }
   saveLocal();
   if (!S.video) { S.videoInfo = null; $("videoInfo").textContent = ""; syncTimeline(); updateBackground(); return; }
   try {
@@ -661,12 +709,14 @@ function drawCommand() {
   if (!S.preset) return;
   const csv = q(S.csv || "LOG.CSV");
   const sync = S.sync ? ` --sync ${q(S.sync)}` : "";
+  // --sync auto は動画が要るので、プレビューにも --video を付ける
+  const previewVideo = S.sync === "auto" && S.video ? ` --video ${videoList().map(q).join(" ")}` : "";
   const off = Number(S.offset) ? ` --offset ${S.offset}` : "";
   const dur = (S.start ? ` --start ${S.start}` : "") + (S.end != null ? ` --end ${S.end}` : "");
   const videos = videoList().map(q).join(" ");
   const lines = [
     "# 静止画プレビュー(枠つき)",
-    `uv run ecorun-overlay ${csv} --preset ${S.name}${sync}${off}${dur} --preview ${S.ts.toFixed(1)} --debug-boxes -o preview.png`,
+    `uv run ecorun-overlay ${csv} --preset ${S.name}${previewVideo}${sync}${off}${dur} --preview ${S.ts.toFixed(1)} --debug-boxes -o preview.png`,
     S.video ? "# 動画に合成" : "# 透過オーバーレイ(ProRes 4444)",
     S.video
       ? `uv run ecorun-overlay ${csv} --preset ${S.name} --video ${videos}${sync}${off}${dur} -o out.mp4`
@@ -713,7 +763,12 @@ function bind() {
   $("chkBoxes").onchange = (e) => { S.showBoxes = e.target.checked; saveLocal(); drawSvg(); };
   $("chkDisabled").onchange = (e) => { S.showDisabled = e.target.checked; saveLocal(); drawSvg(); };
   $("csvInput").addEventListener("change", loadLog);
-  $("syncInput").addEventListener("change", (e) => { S.sync = e.target.value.trim(); saveLocal(); syncTimeline(); updateBackground(); scheduleRender(0); drawCommand(); });
+  $("syncInput").addEventListener("change", (e) => {
+    S.sync = e.target.value.trim();
+    if (S.sync !== "auto") { S.timemap = null; e.target.title = ""; }   // 手で書き換えたら OCR の結果は捨てる
+    saveLocal(); syncTimeline(); updateBackground(); scheduleRender(0); drawCommand();
+  });
+  $("btnAutoSync").onclick = autoSync;
   $("offsetInput").addEventListener("change", (e) => { S.offset = Number(e.target.value) || 0; saveLocal(); syncTimeline(); scheduleRender(0); drawCommand(); });
   const setRange = (key, v) => {
     S[key] = v === "" || v == null || !Number.isFinite(Number(v)) ? null : Math.max(0, Number(v));
@@ -779,7 +834,7 @@ async function init() {
   bind();
   const local = loadLocal();
   Object.assign(S, {
-    csv: local.csv ?? "", sync: local.sync ?? "", offset: local.offset ?? 0, start: local.start ?? null, end: local.end ?? null,
+    csv: local.csv ?? "", sync: local.sync ?? "", offset: local.offset ?? 0, start: local.start ?? null, end: local.end ?? null, timemap: local.timemap ?? null,
     video: local.video ?? "", snap: local.snap ?? 10, ts: local.ts ?? 150, videoT: local.videoT ?? 0,
     showKeepout: local.showKeepout ?? true, showBoxes: local.showBoxes ?? true, showDisabled: local.showDisabled ?? false,
   });
