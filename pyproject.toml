@@ -20,6 +20,7 @@ dependencies = [
 ecorun-overlay = "ecorun.cli:main"
 ecorun-layout = "ecorun.layout:main"
 ecorun-gui = "ecorun.gui.server:main"
+ecorun-sync = "ecorun.ocrsync:main"
 
 [dependency-groups]
 dev = [

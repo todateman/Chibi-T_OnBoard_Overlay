@@ -77,3 +77,21 @@ def test_video_concat(client, seg_dir):
     assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
     assert client.get("/api/video-info", params={"video": "nothing.mp4"}).status_code == 404
     assert client.get("/api/video-info", params={"video": [files[0], "README.md"]}).status_code == 422
+
+
+def test_render_with_timemap(client, synth_csv):
+    preset = client.get("/api/presets/minimal").json()["preset"]
+    tm = [{"v0": 0, "v1": 5, "offset": 10}, {"v0": 5, "v1": 9, "offset": 100}]
+    r = client.post("/api/render", json={"preset": preset, "csv": str(synth_csv), "ts": 106, "timemap": tm})
+    assert r.status_code == 200
+
+
+@pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("tesseract")), reason="ffmpeg か tesseract が無い")
+def test_auto_sync(client, osd_video, osd_csv):
+    r = client.post("/api/auto-sync", json={"video": [str(osd_video)], "csv": str(osd_csv), "step": 2}).json()
+    segs = r["segments"]
+    assert len(segs) == 2 and r["warnings"] == []
+    assert segs[0]["wall"].startswith("2026-10-10T15:00:07") and segs[1]["offset"] == pytest.approx(175.6, abs=0.2)
+    # ログと重ならなければ 422
+    r = client.post("/api/auto-sync", json={"video": [str(osd_video)], "csv": "sampledata/LOG0612.CSV", "step": 2})
+    assert r.status_code in (404, 422)

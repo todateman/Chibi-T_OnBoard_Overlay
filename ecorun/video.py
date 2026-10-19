@@ -21,6 +21,7 @@ from pathlib import Path
 from PIL import Image
 
 from .render import OverlayRenderer
+from .timemap import TimeMap
 
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".ts"}
 
@@ -155,20 +156,22 @@ def extract_frame(video: str | VideoSource, t: float, size: tuple[int, int] | No
     return Image.open(io.BytesIO(out)).convert("RGB")
 
 
-def encode(r: OverlayRenderer, out_path: str, t_sync: float, duration: float, fps: float,
+def encode(r: OverlayRenderer, out_path: str, t_sync: float | TimeMap, duration: float, fps: float,
            video: VideoSource | None = None, crf: int = 18, start: float = 0.0):
     """RGBA の raw フレームを stdin パイプで ffmpeg に渡す。
     video あり → overlay フィルタで合成して H.264 / なし → ProRes 4444(アルファ付き .mov)。
-    start は書き出し開始位置(動画の通し秒)。出力 0 秒目のログ秒は t_sync + start"""
+    t_sync は動画 0 秒目のログ秒(従来の --sync)か、区間ごとの対応 TimeMap。
+    start は書き出し開始位置(動画の通し秒)。出力 k 枚目のログ秒は tm.to_log(start + k / fps)"""
     if not shutil.which("ffmpeg"):
         sys.exit("ffmpeg が見つかりません")
     if video is None and not out_path.lower().endswith(".mov"):
         sys.exit("--video なしの場合、出力は .mov(透過 ProRes 4444)か .png(--preview)にしてください")
     with input_args(video) if video else nullcontext([]) as video_in:
-        _encode(r, out_path, t_sync, duration, fps, video, video_in, crf, start)
+        tm = t_sync if isinstance(t_sync, TimeMap) else TimeMap.constant(t_sync)
+        _encode(r, out_path, tm, duration, fps, video, video_in, crf, start)
 
 
-def _encode(r: OverlayRenderer, out_path: str, t_sync: float, duration: float, fps: float,
+def _encode(r: OverlayRenderer, out_path: str, tm: TimeMap, duration: float, fps: float,
             video: VideoSource | None, video_in: list[str], crf: int, start: float):
     tel = r.tel
     n_out = n_frames = int(duration * fps)
@@ -196,7 +199,7 @@ def _encode(r: OverlayRenderer, out_path: str, t_sync: float, duration: float, f
     k = 0
     try:
         for k in range(n_frames):
-            ts = t_sync + start + k / fps
+            ts = tm.to_log(start + k / fps)
             frame = r.render(min(max(ts, tel.t[0]), tel.t[-1]))
             proc.stdin.write(frame.tobytes())
             if k % int(fps * 10) == 0:

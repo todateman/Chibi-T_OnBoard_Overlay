@@ -17,6 +17,8 @@ Honda エコマイレッジチャレンジ(チーム: ちびTインターナシ�
 - `ecorun/render.py` : `OverlayRenderer` が全ウィジェットの static を重ねた静的レイヤを作り、`render(ts)` でそのコピーに dynamic を順に描いて 1920×1080 RGBA を返す。`debug_boxes` で枠と id を描く
 - `ecorun/video.py` : ffprobe、RGBA の raw フレームを stdin パイプで ffmpeg に渡す(`--video` ありなら overlay フィルタで合成して H.264、`.mov` なら ProRes 4444)、1 フレーム抽出。複数の動画(フォルダ可)は `probe_videos()` で `VideoSource` にまとめ、concat demuxer で 1 本として読む(`locate()` で通し秒 → ファイルと秒)
 - `ecorun/cli.py` : `ecorun-overlay`(従来の CLI + `--preset` / `--debug-boxes`、`--video` は複数可、`--concat-only`、`--start` / `--end` で書き出し区間を動画の再生位置で指定)
+- `ecorun/timemap.py` : 動画秒 → ログ秒の対応 `TimeMap`(区間ごとに offset。従来の `--sync` は `TimeMap.constant`)と、OCR 結果 `OsdSegment` の JSON 入出力
+- `ecorun/ocrsync.py` : `ecorun-sync`。焼き込み日時(`OSD_TIME_BOX`)を Tesseract で読む → 差(焼き込み時刻 − 動画秒)が揃う連続を区間に → 境目を二分探索 → 秒の表示が変わるフレームで秒未満を補正。`--sync auto` / `--sync FILE.json` から使う
 - `ecorun/layout.py` : `ecorun-layout`(list / widgets / schema / validate / lint)。lint のルールもここ
 - `ecorun/gui/server.py` + `static/` : `ecorun-gui`。FastAPI + ビルド不要の素の JS。プレビューは `/api/render` で本番と同じ描画。`/api/events`(SSE)で presets/ の外部変更を通知
 - `presets/*.toml` : default / f9_mask / minimal
@@ -54,7 +56,7 @@ Honda エコマイレッジチャレンジ(チーム: ちびTインターナシ�
 
 - 地平線付近の帯(y≈380〜640)はコース前方・マーシャル・前走車が映るので、何も置かない → 各プリセットの `[[keepout]]` に入れてあり、`ecorun-layout lint` が重なりを警告する
 - 映像の下半分はほぼ路面なので、ゲージ類はここに集める。標高グラフは左下、燃圧グラフは右下(回転計の隣)
-- 右下の焼き込み表示(日時・機種名・速度)はおよそ x 1140〜1720、y 1000〜1040 の位置にある → `f9_mask` プリセットの `mask` ウィジェットで隠す
+- 右下の焼き込み表示(日時・機種名・速度)はおよそ x 1140〜1720、y 1000〜1040 の位置にある → `f9_mask` プリセットの `mask` ウィジェットで隠す。日時部分(x 1157〜1410、y 1002〜1028)は自動同期の OCR に使う。白い太字が路面に直接載るので、路面の白い粒が重なると 1 桁誤読することがある(約 2%)。ocrsync は誤読を前後の読みとの整合で捨てる
 - 座標はすべて canvas(1920×1080)基準で書く。出力時に ffmpeg で動画解像度へスケールされる
 
 ## 開発時の確認方法
@@ -75,6 +77,9 @@ uv run ecorun-overlay sampledata/LOG0650.CSV --preset f9_mask --video sample.mp4
 uv run ecorun-overlay sampledata/LOG0650.CSV --preset f9_mask --video sample.mp4 --sync 15:12:20 --start 1:00 --end 1:10 -o test.mp4
 # 分割動画はフォルダか複数ファイルで(連結だけなら --concat-only)
 uv run ecorun-overlay sampledata/LOG0650.CSV --preset f9_mask --video F9/ --sync 15:12:20 -o test.mp4
+# 焼き込み日時の OCR で自動同期(要 tesseract)。区間の表だけ見るなら ecorun-sync
+uv run ecorun-sync F9/ --csv sampledata/LOG0650.CSV -o sync.json   # --save-crop crop.png で枠の確認
+uv run ecorun-overlay sampledata/LOG0650.CSV --preset f9_mask --video F9/ --sync sync.json -o test.mp4
 
 uv run pytest
 ```
@@ -84,7 +89,7 @@ uv run pytest
 ## TODO・改善候補
 
 - 描画の高速化(クラウド環境で約 13 fps、Apple Silicon Mac で約 50 fps)。候補: 動的要素の部分領域だけ再描画する、multiprocessing でフレームを並列生成する、pycairo へ移行する
-- 同期の半自動化: 動画のオプティカルフロー、またはドラレコ焼き込み速度の OCR から発進点を検出し、ログと突き合わせる
+- 焼き込み日時の無い動画の同期: 動画のオプティカルフローから発進点を検出し、ログと突き合わせる(VSYSTO F9 の焼き込み日時は `--sync auto` で OCR 済み)
 - GUI: 配置禁止帯をキャンバス上でドラッグ編集できるようにする、複数ウィジェットの同時選択・整列
 - 勾配の表示(標高はグラフ表示済み。GPS 標高は 0.1 m 刻みで揺れるので平滑化が必要)
   
