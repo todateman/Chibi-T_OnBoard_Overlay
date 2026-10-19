@@ -44,6 +44,26 @@ def test_fuel_p_graph_skipped_without_column(tmp_path):
     r.render(10.0)
 
 
+def test_env_and_alt_skipped_without_columns(tmp_path):
+    """2025 年のログ(標高・気圧・気温・湿度・燃圧なし)でも描ける。env はエンジン温度だけ出す"""
+    tel = load_log(str(write_synthetic_log(tmp_path / "NOENV.CSV", seconds=30, fuel_p=False, env=False)))
+    r = OverlayRenderer(tel, load_preset("default"), 0, tel.t[-1])
+    assert r.skipped == ["alt_graph", "fuel_p_graph"]
+    r.render(10.0)
+    env = next(w for w in r.widgets if w.cfg.type == "env")
+    assert env.items == ["eng_temp"]
+    p = parse_preset({"widgets": [{"type": "env"}]})
+    w = p.widgets[0]
+    out = _alpha_bbox_outside(OverlayRenderer(tel, p, 0, tel.t[-1]).render(10.0), (w.x, w.y, w.w, w.h))
+    assert out is None
+
+
+def test_env_skipped_when_no_items(tmp_path):
+    tel = load_log(str(write_synthetic_log(tmp_path / "NOENV.CSV", seconds=30, env=False)))
+    p = parse_preset({"widgets": [{"type": "env", "items": ["air_temp", "hum"]}]})
+    assert OverlayRenderer(tel, p, 0, tel.t[-1]).skipped == ["env"]
+
+
 def test_disabled_widget_not_drawn(tel):
     p = parse_preset({"widgets": [{"type": "mask", "enabled": False}]})
     img = OverlayRenderer(tel, p, 0, tel.t[-1]).render(1.0)

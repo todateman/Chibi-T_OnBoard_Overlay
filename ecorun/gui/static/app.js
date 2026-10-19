@@ -18,6 +18,7 @@ const S = {
   sync: "", offset: 0, start: null, end: null,
   timemap: null,                  // OCR の区間ごとの同期 { key: 動画欄, segments: [{v0, v1, offset, wall}] }
   video: "", videoInfo: null, videoT: 0,
+  output: "",                     // 書き出し先。空なら defaultOutput()
   snap: 10, showKeepout: true, showBoxes: true, showDisabled: false,
   playing: false,
 };
@@ -64,7 +65,7 @@ function banner(msg, buttons = [], kind = "") {
   b.hidden = false;
 }
 function saveLocal() {
-  const keep = { name: S.name, csv: S.csv, sync: S.sync, offset: S.offset, start: S.start, end: S.end, timemap: S.timemap,
+  const keep = { name: S.name, csv: S.csv, output: S.output, sync: S.sync, offset: S.offset, start: S.start, end: S.end, timemap: S.timemap,
     video: S.video, snap: S.snap, showKeepout: S.showKeepout, showBoxes: S.showBoxes, showDisabled: S.showDisabled, ts: S.ts, videoT: S.videoT };
   try { localStorage.setItem(LS_KEY, JSON.stringify(keep)); } catch { /* 使えない環境 */ }
 }
@@ -342,21 +343,110 @@ function syncTimeline() {
   $("timeLabel").textContent = (useVideo() ? `動画 ${S.videoT.toFixed(1)} s${vfLabel} → ` : "") +
     `ログ ${S.ts.toFixed(1)} s${S.logInfo ? ` / ${S.logInfo.t_end.toFixed(0)} s` : ""}${lap ? `  LAP ${lap.lap}` : ""}`;
 }
-let frameTimer;
+let frameTimer, frameLoading = false, frameWanted = null;
 function updateBackground() {
   const img = $("bgImg");
-  if (!useVideo()) { img.hidden = true; img.removeAttribute("src"); return; }
+  if (!useVideo()) {
+    img.hidden = true; img.removeAttribute("src"); hideVideo();
+    frameLoading = false; frameWanted = null;   // 読み込み中に src を消すと onload が来ないので戻しておく
+    return;
+  }
+  if (videoPlaying) return;            // 再生中は <video> が背景
   clearTimeout(frameTimer);
-  frameTimer = setTimeout(() => {
+  frameTimer = setTimeout(() => requestFrame(
+    `/api/frame?${videoQuery()}&t=${S.videoT.toFixed(2)}&width=${canvasW()}&height=${canvasH()}`), S.playing ? 0 : 120);
+}
+// 取り出し中に次を頼まれても src を差し替えない(差し替えると読み込みが打ち切られ、1 枚も出なくなる)。
+// 読み終わってから最後に頼まれたものを読む
+function requestFrame(url) {
+  const img = $("bgImg");
+  if (frameLoading) { frameWanted = url; return; }
+  frameLoading = true;
+  img.onload = img.onerror = () => {
+    frameLoading = false;
     img.hidden = false;
-    img.src = `/api/frame?${videoQuery()}&t=${S.videoT.toFixed(2)}&width=${canvasW()}&height=${canvasH()}`;
-  }, S.playing ? 0 : 120);
+    if (!videoPlaying) $("bgVideo").hidden = true;   // 一時停止した位置の静止画が出てから <video> を隠す
+    const next = frameWanted;
+    frameWanted = null;
+    if (next && next !== url) requestFrame(next);
+  };
+  img.src = url;
+}
+
+// 再生中は <video> で元の動画をそのまま流す(1 フレームずつ取り出すのでは間に合わない)。
+// 一時停止中は本番と同じ ffmpeg の静止画。ブラウザで再生できない形式ならコマ送りに戻る
+let videoPlaying = false, videoFile = -1, videoSrc = "", videoRaf;
+function fileAt(t) {
+  const files = S.videoInfo.files;
+  let i = files.length - 1;
+  while (i > 0 && files[i].start > t) i--;
+  return { i, local: Math.max(0, t - files[i].start) };
+}
+async function startVideo() {
+  const v = $("bgVideo");
+  const { i, local } = fileAt(S.videoT);
+  const src = `/api/video-file?${videoQuery()}&i=${i}`;
+  if (src !== videoSrc) { v.src = videoSrc = src; }
+  videoFile = i;
+  v.currentTime = local;
+  try {
+    await v.play();
+  } catch (e) {
+    videoSrc = "";
+    return false;
+  }
+  if (!S.playing) { v.pause(); return true; }      // 待っている間に止められた
+  videoPlaying = true;
+  v.hidden = false;
+  $("bgImg").hidden = true;
+  cancelAnimationFrame(videoRaf);
+  videoRaf = requestAnimationFrame(videoTick);
+  return true;
+}
+function videoTick() {
+  if (!videoPlaying) return;
+  S.videoT = S.videoInfo.files[videoFile].start + $("bgVideo").currentTime;
+  syncTimeline();
+  scheduleRender(0);        // 描画中なら終わってから最新の位置で描く(doRender)
+  drawCommand();
+  videoRaf = requestAnimationFrame(videoTick);
+}
+function onVideoEnded() {
+  if (!videoPlaying) return;
+  const files = S.videoInfo.files;
+  videoPlaying = false;
+  if (videoFile + 1 < files.length) {              // 連結している次のファイルへ
+    S.videoT = files[videoFile + 1].start;
+    startVideo();
+  } else {
+    S.videoT = S.videoInfo.duration;
+    togglePlay();
+  }
+}
+// 再生中にスライダーを動かしたら <video> をシークする
+function seekVideo() {
+  const { i, local } = fileAt(S.videoT);
+  if (i === videoFile) $("bgVideo").currentTime = local;
+  else { videoPlaying = false; startVideo(); }
+}
+// 再生を止める。止めた位置を S.videoT に残し、静止画に差し替える
+function stopVideo() {
+  cancelAnimationFrame(videoRaf);
+  const v = $("bgVideo");
+  if (videoPlaying) S.videoT = S.videoInfo.files[videoFile].start + v.currentTime;
+  videoPlaying = false;
+  v.pause();
+}
+function hideVideo() {
+  stopVideo();
+  $("bgVideo").hidden = true;
 }
 function setTime(v) {
   if (useVideo()) S.videoT = Math.max(0, Math.min(v, S.videoInfo.duration));
   else S.ts = Math.max(0, Math.min(v, S.logInfo?.t_end ?? v));
   syncTimeline();
-  updateBackground();
+  if (videoPlaying) seekVideo();
+  else updateBackground();
   scheduleRender(S.playing ? 0 : 30);
   drawCommand();
   saveLocal();
@@ -368,7 +458,7 @@ async function loadLog() {
   try {
     const d = S.preset?.data || {};
     S.logInfo = await api("GET", `/api/log-info?csv=${encodeURIComponent(S.csv)}&rpm_on_threshold=${d.rpm_on_threshold ?? 300}&heading_lookback_s=${d.heading_lookback_s ?? 3}`);
-    status(`ログ: 開始 ${S.logInfo.start} / ${S.logInfo.t_end.toFixed(0)} 秒${S.logInfo.has_fuel_p ? "" : "(燃圧なし)"}`, 5000);
+    status(`ログ: 開始 ${S.logInfo.start} / ${S.logInfo.t_end.toFixed(0)} 秒${S.logInfo.missing?.length ? `(なし: ${S.logInfo.missing.join(", ")})` : ""}`, 5000);
     if (S.ts > S.logInfo.t_end) S.ts = Math.min(150, S.logInfo.t_end);
   } catch (e) {
     S.logInfo = null;
@@ -403,6 +493,7 @@ async function autoSync() {
   }
 }
 async function loadVideo() {
+  if (S.playing) togglePlay();
   S.video = $("videoInput").value.trim();
   if (S.timemap && S.timemap.key !== S.video) {          // 別の動画の OCR 結果は使わない
     S.timemap = null;
@@ -427,11 +518,20 @@ async function loadVideo() {
   drawCommand();
 }
 let playTimer, playLast;
-function togglePlay() {
+async function togglePlay() {
   S.playing = !S.playing;
   $("btnPlay").textContent = S.playing ? "❚❚" : "▶";
   clearInterval(playTimer);
-  if (!S.playing) return;
+  if (!S.playing) {
+    stopVideo();
+    syncTimeline(); updateBackground(); scheduleRender(0); drawCommand(); saveLocal();
+    return;
+  }
+  if (useVideo()) {
+    if (await startVideo()) return;
+    if (!S.playing) return;
+    status("この動画はブラウザで再生できないので、静止画のコマ送りで再生します", 5000);
+  }
   playLast = performance.now();
   playTimer = setInterval(() => {
     if (renderBusy) return;      // 描画が追いつかなければコマ落ちさせる
@@ -705,6 +805,78 @@ function drawIssues() {
   }, el("span", { class: "lv" }, i.level), i.msg)));
 }
 const q = (s) => (/^[\w./:@-]+$/.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`);
+// ---------------------------------------------------------------------
+//  書き出し(サーバーが ecorun-overlay を別プロセスで実行する)
+// ---------------------------------------------------------------------
+// 出力の候補: 動画と同じフォルダに「名前_overlay.mp4」。動画が無ければ CSV の隣に透過 .mov
+function defaultOutput(kind) {
+  const src = (useVideo() ? videoList()[0] : S.csv || "overlay").replace(/\/+$/, "");
+  const i = src.lastIndexOf("/");
+  const dir = i >= 0 ? src.slice(0, i + 1) : "";
+  const stem = src.slice(i + 1).replace(/\.[^.]*$/, "");
+  if (kind === "concat") return `${dir}${stem}_joined.mp4`;
+  return `${dir}${stem}_overlay.${useVideo() ? "mp4" : "mov"}`;
+}
+async function startExport(kind, overwrite = false) {
+  if (kind === "overlay" && !S.csv) { status("先にログ(CSV)を指定してください"); return; }
+  const tm = activeTimemap();
+  const body = {
+    kind, overwrite, output: (kind === "overlay" && S.output) || defaultOutput(kind),
+    video: useVideo() ? videoList() : [],
+    preset: S.preset, csv: S.csv, offset: Number(S.offset) || 0, start: S.start, end: S.end,
+    // OCR 済みならその区間を渡す(CLI で OCR をやり直さない)
+    sync: tm ? null : S.sync || null,
+    timemap: tm ? tm.segments.map(({ v0, v1, wall }) => ({ v0, v1, wall })) : null,
+  };
+  if (S.playing) togglePlay();
+  try {
+    showExport(await api("POST", "/api/export", body));
+    pollExport();
+  } catch (e) {
+    if (e.status === 409 && e.info.exists) {
+      if (await dialog(`${body.output} は既にあります。上書きしますか?`, { ok: "上書き" })) startExport(kind, true);
+      return;
+    }
+    status(`書き出せません: ${e.message}`, 0);
+  }
+}
+let exportTimer;
+async function pollExport() {
+  clearTimeout(exportTimer);
+  try {
+    const st = await api("GET", "/api/export");
+    showExport(st);
+    if (st.state === "running") exportTimer = setTimeout(pollExport, 1000);
+  } catch {
+    exportTimer = setTimeout(pollExport, 3000);
+  }
+}
+function fmtSec(s) {
+  s = Math.round(s);
+  return s >= 60 ? `${Math.floor(s / 60)} 分 ${String(s % 60).padStart(2, "0")} 秒` : `${s} 秒`;
+}
+function showExport(st) {
+  const running = st.state === "running";
+  $("btnExport").disabled = $("btnConcat").disabled = running;
+  $("btnCancelExport").hidden = !running;
+  const pg = $("exportProgress");
+  pg.hidden = !running;
+  if (st.total) { pg.max = st.total; pg.value = st.frame; } else pg.removeAttribute("value");   // 準備中・連結は不定
+  const last = st.log?.at(-1) || "";
+  $("exportStatus").textContent = {
+    idle: "",
+    running: st.cancelling ? "中止しています…" : st.total
+      ? `書き出し中 ${Math.floor(st.frame / st.total * 100)}%(残り約 ${fmtSec(st.eta)})`
+      : st.kind === "concat" ? "連結中…" : "準備中…",
+    done: `完了(${fmtSec(st.elapsed)}): ${st.output}`,
+    failed: `失敗: ${last}`,
+    cancelled: "中止しました",
+  }[st.state] ?? "";
+  $("exportStatus").classList.toggle("error", st.state === "failed");
+  // 実行したコマンドと出力はマウスを載せると見える
+  $("exportStatus").title = st.command ? `${st.command}\n\n${(st.log || []).join("\n")}` : "";
+}
+
 function drawCommand() {
   if (!S.preset) return;
   const csv = q(S.csv || "LOG.CSV");
@@ -728,6 +900,8 @@ function drawCommand() {
     `uv run ecorun-layout lint ${S.name}`,
   ];
   $("cmd").textContent = lines.join("\n");
+  $("outputInput").placeholder = defaultOutput("overlay");
+  $("btnConcat").hidden = !(useVideo() && S.videoInfo.files.length > 1);
   $("cmdNote").textContent = isDirty() ? "※ 未保存の変更はコマンドに反映されません" : "";
 }
 
@@ -785,6 +959,11 @@ function bind() {
   $("timeSlider").addEventListener("input", (e) => setTime(Number(e.target.value)));
   $("timeInput").addEventListener("change", (e) => setTime(Number(e.target.value)));
   $("btnPlay").onclick = togglePlay;
+  $("bgVideo").addEventListener("ended", onVideoEnded);
+  $("outputInput").addEventListener("change", (e) => { S.output = e.target.value.trim(); saveLocal(); });
+  $("btnExport").onclick = () => startExport("overlay");
+  $("btnConcat").onclick = () => startExport("concat");
+  $("btnCancelExport").onclick = async () => showExport(await api("POST", "/api/export/cancel"));
   $("btnCopy").onclick = async () => { await navigator.clipboard.writeText($("cmd").textContent); status("コマンドをコピーしました"); };
   const svg = $("svg");
   svg.addEventListener("pointerdown", onPointerDown);
@@ -834,7 +1013,7 @@ async function init() {
   bind();
   const local = loadLocal();
   Object.assign(S, {
-    csv: local.csv ?? "", sync: local.sync ?? "", offset: local.offset ?? 0, start: local.start ?? null, end: local.end ?? null, timemap: local.timemap ?? null,
+    csv: local.csv ?? "", output: local.output ?? "", sync: local.sync ?? "", offset: local.offset ?? 0, start: local.start ?? null, end: local.end ?? null, timemap: local.timemap ?? null,
     video: local.video ?? "", snap: local.snap ?? 10, ts: local.ts ?? 150, videoT: local.videoT ?? 0,
     showKeepout: local.showKeepout ?? true, showBoxes: local.showBoxes ?? true, showDisabled: local.showDisabled ?? false,
   });
@@ -847,6 +1026,7 @@ async function init() {
   $("startInput").value = S.start ?? "";
   $("endInput").value = S.end ?? "";
   $("videoInput").value = S.video;
+  $("outputInput").value = S.output;
 
   const [types, schema, logs] = await Promise.all([api("GET", "/api/widget-types"), api("GET", "/api/schema"), api("GET", "/api/logs")]);
   S.widgetTypes = types;
@@ -864,6 +1044,7 @@ async function init() {
   await loadLog();
   if (S.video) await loadVideo();
   watchEvents();
+  pollExport();          // 書き出し中に再読込したら進み具合の表示を戻す
 }
 
 init().catch((e) => banner(`初期化に失敗しました: ${e.message}`, [], "error"));

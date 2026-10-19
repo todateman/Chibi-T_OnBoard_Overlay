@@ -8,8 +8,9 @@ import pytest
 from ecorun.telemetry import load_log
 
 
-def write_synthetic_log(path, seconds=180, hz=10, fuel_p=True, start="2026-10-10 15:00:00"):
-    """現行フォーマット(10 Hz)の列名で、周回コースをパルス&グライドで走る合成ログを書く"""
+def write_synthetic_log(path, seconds=180, hz=10, fuel_p=True, env=True, start="2026-10-10 15:00:00"):
+    """現行フォーマット(10 Hz)の列名で、周回コースをパルス&グライドで走る合成ログを書く。
+    env=False なら 2025 年のログのように標高・気圧・気温・湿度の列を省く"""
     n = seconds * hz
     t = np.arange(n) / hz
     on = (t % 40) < 8                                   # 40 秒周期で 8 秒だけエンジンON
@@ -33,6 +34,8 @@ def write_synthetic_log(path, seconds=180, hz=10, fuel_p=True, start="2026-10-10
         "標高(m)": 10 + 2 * np.sin(ang),
         "温度(C)": 80.0, "気圧(kPa)": 101.3, "気温(C)": 25.0, "湿度(%)": 50.0,
     })
+    if not env:
+        df = df.drop(columns=["標高(m)", "気圧(kPa)", "気温(C)", "湿度(%)"])
     if fuel_p:
         df["燃圧(MPa)"] = np.where(on, 0.31, 0.26)
     df.to_csv(path, index=False, encoding="utf-8-sig")

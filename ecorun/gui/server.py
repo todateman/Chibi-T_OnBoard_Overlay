@@ -12,26 +12,31 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import atexit
 import hashlib
 import io
 import json
+import tempfile
 import threading
 import webbrowser
 from collections import OrderedDict
+from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from ..config import (PRESET_DIR, PRESET_NAME_RE, ROOT_DIR, PresetError, list_presets, parse_preset,
-                      preset_json_schema, preset_to_dict, read_preset_file, save_preset)
+from ..config import (PRESET_DIR, PRESET_NAME_RE, ROOT_DIR, PresetError, dump_preset, list_presets,
+                      parse_preset, preset_json_schema, preset_to_dict, read_preset_file, save_preset)
 from ..draw import Fonts
 from ..layout import lint_preset, widget_types
 from ..render import OverlayRenderer
-from ..telemetry import LogFormatError, Telemetry, load_log, parse_sync
-from ..timemap import Segment, TimeMap
+from ..telemetry import OPTIONAL_COLS, LogFormatError, Telemetry, load_log, parse_sync
+from ..timemap import OsdSegment, Segment, TimeMap, osd_to_json
+from .export import ExportJob
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -234,6 +239,7 @@ def get_log_info(csv: str, rpm_on_threshold: float = 300, heading_lookback_s: fl
         "t_end": float(tel.t[-1]),
         "start": tel.t0.strftime("%Y-%m-%d %H:%M:%S.%f")[:-4],
         "has_fuel_p": tel.has("fuel_p"),
+        "missing": [label for k, label in OPTIONAL_COLS.items() if not tel.has(k)],
         "laps": [{"lap": int(n), "t": float(t)} for n, t in tel.lap_starts],
         "on_spans": len(tel.on_spans),
     }
@@ -269,6 +275,15 @@ def get_frame(video: list[str] = Query(description=VIDEO_DESC), t: float = Query
     except Exception as e:  # noqa: BLE001
         raise HTTPException(422, f"フレームを取り出せません: {e}") from None
     return Response(data, media_type="image/jpeg")
+
+
+@app.get("/api/video-file", summary="動画ファイルそのもの(Range 対応)。GUI の再生用。i は連結の何本目か",
+         response_class=FileResponse)
+def get_video_file(video: list[str] = Query(description=VIDEO_DESC), i: int = Query(0, ge=0)):
+    _, src = _video_source(video)          # ffprobe で読めた動画ファイルだけを返す
+    if i >= len(src.files):
+        raise HTTPException(404, f"動画は {len(src.files)} 本です: i={i}")
+    return FileResponse(src.files[i])
 
 
 class AutoSyncBody(BaseModel):
@@ -344,6 +359,99 @@ def render(body: RenderBody):
     img.save(buf, "PNG", compress_level=1)
     return Response(buf.getvalue(), media_type="image/png",
                     headers={"X-Skipped-Widgets": ",".join(r.skipped)})
+
+
+# =====================================================================
+#  書き出し(ecorun-overlay を別プロセスで実行)
+# =====================================================================
+_job: ExportJob | None = None
+atexit.register(lambda: _job and _job.cancel())       # GUI を閉じたら書き出しも止める
+
+
+class OsdSegmentBody(BaseModel):
+    v0: float = Field(description="区間の開始(動画の通し秒)")
+    v1: float = Field(description="区間の終了")
+    wall: str = Field(description="v0 での焼き込み日時(ISO 8601)")
+
+
+class ExportBody(BaseModel):
+    kind: Literal["overlay", "concat"] = Field(
+        "overlay", description="overlay = オーバーレイを書き出す(動画があれば合成)/ concat = 動画を連結するだけ")
+    preset: dict | None = Field(None, description="プリセット(未保存の編集中の内容でよい)。overlay で必須")
+    csv: str | None = Field(None, description="CSV のパス。overlay で必須")
+    video: list[str] = Field([], description=VIDEO_DESC)
+    sync: str | None = Field(None, description="CLI の --sync と同じ。timemap があればそちらを使う")
+    offset: float = Field(0.0, description="CLI の --offset と同じ")
+    start: float | None = Field(None, ge=0, description="CLI の --start と同じ(秒)")
+    end: float | None = Field(None, ge=0, description="CLI の --end と同じ(秒)")
+    timemap: list[OsdSegmentBody] | None = Field(None, description="OCR の結果(/api/auto-sync の segments)。--sync FILE.json として渡す")
+    output: str = Field(description="出力ファイルのパス(.mp4 / 動画なしなら .mov)")
+    overwrite: bool = Field(False, description="出力が既にあれば上書きする")
+
+
+@app.post("/api/export", summary="書き出しを始める(1 本ずつ)。進み具合は GET /api/export")
+def start_export(body: ExportBody):
+    global _job
+    if _job and _job.state == "running":
+        raise HTTPException(409, {"message": "書き出し中です。終わるか中止してから始めてください"})
+    out = Path(body.output).expanduser()
+    if not out.is_absolute():
+        out = ROOT_DIR / out
+    if not out.parent.is_dir():
+        raise HTTPException(422, {"message": f"出力先のフォルダがありません: {out.parent}"})
+    if out.suffix.lower() not in (".mp4", ".mov", ".mkv", ".m4v"):
+        raise HTTPException(422, {"message": f"出力は .mp4 / .mov などの動画ファイルにしてください: {out.name}"})
+    src = _video_source(body.video)[1] if body.video else None
+    if src and any(Path(f).resolve() == out.resolve() for f in src.files):
+        raise HTTPException(422, {"message": "入力の動画と同じファイルには書き出せません"})
+    if src is None and (body.kind == "concat" or out.suffix.lower() != ".mov"):
+        raise HTTPException(422, {"message": "動画なしで書き出せるのは透過オーバーレイ(.mov)だけです"
+                                  if body.kind == "overlay" else "連結する動画を指定してください"})
+    if out.exists() and not body.overwrite:
+        raise HTTPException(409, {"message": f"{out} は既にあります", "exists": True})
+
+    args, tmp = [], None
+    if src:
+        args += ["--video", *src.files]
+    if body.kind == "concat":
+        args += ["--concat-only"]
+    else:
+        if body.preset is None or not body.csv:
+            raise HTTPException(422, {"message": "プリセットと CSV を指定してください"})
+        p = _parse(body.preset)
+        csv = _resolve_file(body.csv, "CSV ")
+        tmp = Path(tempfile.mkdtemp(prefix="ecorun-export-"))
+        preset_path = tmp / "preset.toml"
+        preset_path.write_text(dump_preset(p), encoding="utf-8")
+        args = [str(csv), "--preset", str(preset_path), *args]
+        if body.timemap:
+            sync_path = tmp / "sync.json"
+            osd_to_json([OsdSegment(s.v0, s.v1, datetime.fromisoformat(s.wall)) for s in body.timemap],
+                        sync_path, src.files if src else None)
+            args += ["--sync", str(sync_path)]
+        elif body.sync:
+            args += ["--sync", body.sync]
+        if body.offset:
+            args += ["--offset", f"{body.offset:g}"]
+        if body.start:
+            args += ["--start", f"{body.start:g}"]
+        if body.end is not None:
+            args += ["--end", f"{body.end:g}"]
+    args += ["-o", str(out)]
+    _job = ExportJob(body.kind, args, out, tmp)
+    return _job.status()
+
+
+@app.get("/api/export", summary="書き出しの進み具合(state: idle / running / done / failed / cancelled)")
+def get_export():
+    return _job.status() if _job else {"state": "idle"}
+
+
+@app.post("/api/export/cancel", summary="書き出しを中止する(途中までの出力は消す)")
+def cancel_export():
+    if _job:
+        _job.cancel()
+    return get_export()
 
 
 # =====================================================================

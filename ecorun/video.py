@@ -195,15 +195,16 @@ def _encode(r: OverlayRenderer, out_path: str, tm: TimeMap, duration: float, fps
                "-c:v", "prores_ks", "-profile:v", "4444", "-pix_fmt", "yuva444p10le", out_path]
 
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-    t_wall = time.time()
+    t_wall = t_print = time.time()
     k = 0
     try:
         for k in range(n_frames):
             ts = tm.to_log(start + k / fps)
             frame = r.render(min(max(ts, tel.t[0]), tel.t[-1]))
             proc.stdin.write(frame.tobytes())
-            if k % int(fps * 10) == 0:
-                el = time.time() - t_wall
+            if k == 0 or time.time() - t_print >= 1.0:      # 進捗は 1 秒ごと(GUI はこれを読んで進捗バーを出す)
+                t_print = time.time()
+                el = t_print - t_wall
                 eta = el / max(1, k) * (n_frames - k)
                 print(f"\r{k}/{n_frames} frames  ETA {eta:5.0f}s", end="", flush=True)
     except BrokenPipeError:

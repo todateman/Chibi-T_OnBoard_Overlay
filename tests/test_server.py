@@ -55,7 +55,7 @@ def test_render_png(client, synth_csv):
                                          "sync": "30", "start": 20, "end": 80})
     assert r.status_code == 200
     info = client.get("/api/log-info", params={"csv": str(synth_csv)}).json()
-    assert info["has_fuel_p"] and info["t_end"] > 100
+    assert info["has_fuel_p"] and info["missing"] == [] and info["t_end"] > 100
 
 
 def test_schema_and_types(client):
@@ -77,6 +77,11 @@ def test_video_concat(client, seg_dir):
     assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
     assert client.get("/api/video-info", params={"video": "nothing.mp4"}).status_code == 404
     assert client.get("/api/video-info", params={"video": [files[0], "README.md"]}).status_code == 422
+    # 再生用のファイル配信(<video> がシークできるよう Range に応える)
+    r = client.get("/api/video-file", params={"video": str(seg_dir), "i": 1}, headers={"Range": "bytes=0-99"})
+    assert r.status_code == 206 and len(r.content) == 100
+    assert r.content == open(files[1], "rb").read(100)
+    assert client.get("/api/video-file", params={"video": str(seg_dir), "i": 9}).status_code == 404
 
 
 def test_render_with_timemap(client, synth_csv):
@@ -95,3 +100,54 @@ def test_auto_sync(client, osd_video, osd_csv):
     # ログと重ならなければ 422
     r = client.post("/api/auto-sync", json={"video": [str(osd_video)], "csv": "sampledata/LOG0612.CSV", "step": 2})
     assert r.status_code in (404, 422)
+
+
+def _wait_export(client, timeout=60):
+    import time
+    t_end = time.time() + timeout
+    while time.time() < t_end:
+        st = client.get("/api/export").json()
+        if st["state"] != "running":
+            return st
+        time.sleep(0.2)
+    raise AssertionError(f"書き出しが終わらない: {st}")
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg が無い")
+def test_export_overlay(client, synth_csv, tmp_path):
+    """GUI の書き出し: 画面のプリセット(未保存でよい)で ecorun-overlay を別プロセスで実行する"""
+    preset = client.get("/api/presets/minimal").json()["preset"]
+    out = tmp_path / "ov.mov"
+    body = {"preset": preset, "csv": str(synth_csv), "sync": "10", "start": 0, "end": 0.5, "output": str(out)}
+    st = client.post("/api/export", json=body).json()
+    assert st["state"] == "running" and "--start 0" not in st["command"] and "--end 0.5" in st["command"]
+    st = _wait_export(client)
+    assert st["state"] == "done", st["log"]
+    assert out.stat().st_size > 0 and st["total"] == 15
+    # 既にあれば 409(GUI は確認してから overwrite: true で送り直す)
+    r = client.post("/api/export", json=body)
+    assert r.status_code == 409 and r.json()["exists"]
+    assert client.post("/api/export", json={**body, "overwrite": True}).status_code == 200
+    assert _wait_export(client)["state"] == "done"
+
+
+def test_export_validation(client, synth_csv, tmp_path):
+    preset = client.get("/api/presets/minimal").json()["preset"]
+    body = {"preset": preset, "csv": str(synth_csv)}
+    # 動画なしで .mp4 は書けない / 出力先フォルダが無い / 動画以外の拡張子
+    assert client.post("/api/export", json={**body, "output": str(tmp_path / "a.mp4")}).status_code == 422
+    assert client.post("/api/export", json={**body, "output": str(tmp_path / "no/a.mov")}).status_code == 422
+    assert client.post("/api/export", json={**body, "output": str(tmp_path / "a.png")}).status_code == 422
+    assert client.post("/api/export", json={"kind": "concat", "output": str(tmp_path / "a.mp4")}).status_code == 422
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg が無い")
+def test_export_cancel(client, synth_csv, tmp_path):
+    preset = client.get("/api/presets/default").json()["preset"]
+    out = tmp_path / "long.mov"
+    client.post("/api/export", json={"preset": preset, "csv": str(synth_csv), "output": str(out)})
+    assert client.post("/api/export", json={"preset": preset, "csv": str(synth_csv),
+                                            "output": str(tmp_path / "b.mov")}).status_code == 409   # 1 本ずつ
+    client.post("/api/export/cancel")
+    st = _wait_export(client)
+    assert st["state"] == "cancelled" and not out.exists()

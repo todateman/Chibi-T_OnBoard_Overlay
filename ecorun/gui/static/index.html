@@ -61,6 +61,7 @@
     </div>
     <div id="stageWrap">
       <div id="stage">
+        <video id="bgVideo" muted playsinline preload="auto" hidden></video>
         <img id="bgImg" alt="" hidden>
         <img id="ovImg" alt="">
         <svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg>
@@ -102,6 +103,16 @@
         <button id="btnVideo">読込</button>
         <button id="btnVideoClear">外す</button>
         <span id="videoInfo" class="muted"></span>
+      </div>
+      <div class="row">
+        <label class="grow">出力
+          <input id="outputInput" class="mono" title="書き出すファイル。空なら薄字の候補(動画と同じフォルダ)に書き出す">
+        </label>
+        <button id="btnExport" title="今の画面のレイアウト(未保存の変更を含む)と同期・開始・終了の設定で書き出す。動画が無ければ透過オーバーレイ(.mov)">書き出し</button>
+        <button id="btnConcat" hidden title="オーバーレイなしで動画を連結するだけ(再エンコードなし)">連結のみ</button>
+        <button id="btnCancelExport" hidden>中止</button>
+        <progress id="exportProgress" hidden></progress>
+        <span id="exportStatus" class="muted"></span>
       </div>
       <div class="row">
         <button id="btnPlay" title="再生 / 停止">▶</button>
