@@ -8,7 +8,7 @@ Honda エコマイレッジチャレンジ(チーム: ちびTインターナシ�
 
 ## 構成
 
-- `ecorun/telemetry.py` : `load_log()` で CSV 読込 → 列名を `COL` の内部キー(`speed`, `rpm`, `fuel_p` など)へ変換 → 経過秒 `t` の配列、GPS 未測位の補完、`smooth_held()` で同値の連続を間引き、方位算出、ラップ開始時刻・エンジンON区間の抽出 → `Telemetry`
+- `ecorun/telemetry.py` : `load_log()` で CSV 読込 → 列名を `COL` の内部キー(`speed`, `rpm`, `fuel_p` など)へ変換 → 経過秒 `t` の配列、GPS 未測位の補完、`smooth_held()` で同値の連続を間引き、方位算出、走行開始時刻(`走行時間` が 0 から動き出した時刻)とラップ開始時刻・エンジンON区間の抽出 → `Telemetry`
 - `ecorun/config.py` : レイアウトプリセット(TOML)の pydantic モデル。**これが唯一の仕様**で、`schema/preset.schema.json`・GUI のフォーム・`ecorun-layout widgets`・API の OpenAPI はここから生成される。読込(tomllib)と保存(tomlkit でコメント・並びを保持)
 - `ecorun/widgets.py` : ウィジェットの描画実装(`IMPLS` が type → クラス)。各ウィジェットは自分の box(x, y, w, h)の内側だけに描く
   - `static(img)` : パネル・目盛り・区間全体のグラフなど毎フレーム共通の部分。1 回だけ呼ばれる

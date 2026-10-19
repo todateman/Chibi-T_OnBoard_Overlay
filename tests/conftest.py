@@ -8,9 +8,10 @@ import pytest
 from ecorun.telemetry import load_log
 
 
-def write_synthetic_log(path, seconds=180, hz=10, fuel_p=True, env=True, start="2026-10-10 15:00:00"):
+def write_synthetic_log(path, seconds=180, hz=10, fuel_p=True, env=True, start="2026-10-10 15:00:00", idle=0):
     """現行フォーマット(10 Hz)の列名で、周回コースをパルス&グライドで走る合成ログを書く。
-    env=False なら 2025 年のログのように標高・気圧・気温・湿度の列を省く"""
+    env=False なら 2025 年のログのように標高・気圧・気温・湿度の列を省く。
+    idle 秒を指定すると、先頭にその秒数だけ停車中(1 周目・走行時間 0)の行を足す"""
     n = seconds * hz
     t = np.arange(n) / hz
     on = (t % 40) < 8                                   # 40 秒周期で 8 秒だけエンジンON
@@ -38,6 +39,12 @@ def write_synthetic_log(path, seconds=180, hz=10, fuel_p=True, env=True, start="
         df = df.drop(columns=["標高(m)", "気圧(kPa)", "気温(C)", "湿度(%)"])
     if fuel_p:
         df["燃圧(MPa)"] = np.where(on, 0.31, 0.26)
+    if idle:
+        pre = df.iloc[[0] * (idle * hz)].copy()
+        pre[["速度(km/h)", "回転数(rpm)"]] = 0
+        df = pd.concat([pre, df], ignore_index=True)
+        df["記録日時"] = (pd.Timestamp(start) + pd.to_timedelta(np.arange(len(df)) / hz, unit="s")) \
+            .strftime("%Y/%m/%d %H:%M:%S.%f").str[:-4]
     df.to_csv(path, index=False, encoding="utf-8-sig")
     return path
 

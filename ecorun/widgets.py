@@ -103,7 +103,7 @@ class Timer(WidgetImpl):
         cur = [s for s in tel.lap_starts if s[1] <= ts]
         if cur and lap > 0:
             self.T(d, (x0 + S(260), y0 + S(40)), fmt_time(ts - cur[-1][1], ms=True), 42)
-            if len(cur) >= 3:  # 前周タイム
+            if len(cur) >= 2 and cur[-2][0] > 0:  # 前周タイム
                 prev = cur[-1][1] - cur[-2][1]
                 self.T(d, (self.x1 - S(15), y0 + S(12)), f"前周 {fmt_time(prev, ms=True)}", 18, c.sub, "ra")
         else:
