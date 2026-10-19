@@ -28,6 +28,15 @@ class OverlayRenderer:
         self.skipped = [w.cfg.id for w in impls if not w.available()]
         self.base = self._build_static()
 
+    def spec(self) -> tuple:
+        """別プロセスで同じ Renderer を作り直すための材料(Fonts は pickle できないのでパスで渡す)"""
+        return (self.tel, self.preset, self.t_start, self.t_end, self.fonts.path, self.debug_boxes)
+
+    @classmethod
+    def from_spec(cls, spec: tuple) -> OverlayRenderer:
+        tel, preset, t_start, t_end, font_path, debug_boxes = spec
+        return cls(tel, preset, t_start, t_end, Fonts(font_path), debug_boxes)
+
     def _build_static(self) -> Image.Image:
         img = Image.new("RGBA", (self.W, self.H), (0, 0, 0, 0))
         for w in self.widgets:

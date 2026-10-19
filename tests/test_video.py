@@ -6,8 +6,8 @@ from ecorun.cli import main
 from ecorun.config import load_preset
 from ecorun.draw import Fonts
 from ecorun.render import OverlayRenderer
-from ecorun.video import (VideoError, VideoSource, encode, expand_videos, extract_frame, probe,
-                          probe_videos)
+from ecorun.video import (VideoError, VideoSource, encode, expand_videos, extract_frame, h264_args, probe,
+                          probe_videos, resolve_encoder)
 
 from conftest import make_video
 
@@ -70,6 +70,26 @@ def test_encode_concatenated(seg_dir, tel, tmp_path):
     w, h, _, dur = probe(str(out))
     assert (w, h) == (320, 180) and dur == pytest.approx(3.0, abs=0.15)
     assert extract_frame(str(out), 2.5).getpixel((160, 90))[1] > 200     # 3 本目(緑)まで入っている
+
+
+@pytest.mark.parametrize("encoder", ["x264", "auto"])
+def test_encode_parallel(seg_dir, tel, tmp_path, encoder):
+    """描画を 2 プロセスにしても枚数・内容が揃う(auto は macOS なら videotoolbox)"""
+    src = probe_videos([str(seg_dir)])
+    r = OverlayRenderer(tel, load_preset("minimal"), 30, 30 + src.duration, Fonts())
+    out = tmp_path / f"par_{encoder}.mp4"
+    encode(r, str(out), 30, src.duration, src.fps, src, encoder=encoder, jobs=2)
+    assert probe(str(out))[3] == pytest.approx(3.0, abs=0.15)
+    assert extract_frame(str(out), 2.5).getpixel((160, 90))[1] > 200
+
+
+def test_resolve_encoder():
+    assert resolve_encoder("x264") == "x264"
+    assert resolve_encoder("auto") in ("x264", "videotoolbox")
+    assert h264_args("x264", 20, "veryfast") == ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
+    assert h264_args("videotoolbox")[1] == "h264_videotoolbox"
+    with pytest.raises(ValueError):
+        resolve_encoder("nvenc")
 
 
 def test_single_file_source(seg_dir):

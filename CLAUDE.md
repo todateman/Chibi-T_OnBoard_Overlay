@@ -8,14 +8,16 @@ Honda エコマイレッジチャレンジ(チーム: ちびTインターナシ�
 
 ## 構成
 
-- `ecorun/telemetry.py` : `load_log()` で CSV 読込 → 列名を `COL` の内部キー(`speed`, `rpm`, `fuel_p` など)へ変換 → 経過秒 `t` の配列、GPS 未測位の補完、`smooth_held()` で同値の連続を間引き、方位算出、ラップ開始時刻・エンジンON区間の抽出 → `Telemetry`
+- `ecorun/telemetry.py` : `load_log()` で CSV 読込 → 列名を `COL` の内部キー(`speed`, `rpm`, `fuel_p` など)へ変換 → 経過秒 `t` の配列、GPS 未測位の補完、`smooth_held()` で同値の連続を間引き、方位算出、走行開始時刻(`走行時間` が 0 から動き出した時刻)とラップ開始時刻・エンジンON区間の抽出 → `Telemetry`
 - `ecorun/config.py` : レイアウトプリセット(TOML)の pydantic モデル。**これが唯一の仕様**で、`schema/preset.schema.json`・GUI のフォーム・`ecorun-layout widgets`・API の OpenAPI はここから生成される。読込(tomllib)と保存(tomlkit でコメント・並びを保持)
 - `ecorun/widgets.py` : ウィジェットの描画実装(`IMPLS` が type → クラス)。各ウィジェットは自分の box(x, y, w, h)の内側だけに描く
   - `static(img)` : パネル・目盛り・区間全体のグラフなど毎フレーム共通の部分。1 回だけ呼ばれる
   - `dynamic(img, ts)` : ログ秒 `ts` の値に依存する部分
   - 文字サイズ・余白は基準サイズ(モデルの `REF`)での値を書き、`self.S()` / `self.F()` / `self.T()` で拡縮する。ゲージは基準半径 180
+  - `dynamic` は書き出しで毎フレーム呼ばれるので、box 全体の SS レイヤを毎回作らない(ゲージの値の弧は 1 回だけ描いた 270° の弧を角度で切り、針は外接矩形だけ SS で描く)
 - `ecorun/render.py` : `OverlayRenderer` が全ウィジェットの static を重ねた静的レイヤを作り、`render(ts)` でそのコピーに dynamic を順に描いて 1920×1080 RGBA を返す。`debug_boxes` で枠と id を描く
-- `ecorun/video.py` : ffprobe、RGBA の raw フレームを stdin パイプで ffmpeg に渡す(`--video` ありなら overlay フィルタで合成して H.264、`.mov` なら ProRes 4444)、1 フレーム抽出。複数の動画(フォルダ可)は `probe_videos()` で `VideoSource` にまとめ、concat demuxer で 1 本として読む(`locate()` で通し秒 → ファイルと秒)
+- `ecorun/video.py` : ffprobe、RGBA の raw フレームを stdin パイプで ffmpeg に渡す(`--video` ありなら overlay フィルタで合成して H.264、`.mov` なら ProRes 4444)。H.264 は `--encoder auto` で macOS なら h264_videotoolbox(libx264 medium は 1080p で約 70 fps が上限で、描画と CPU を取り合う)、1 フレーム抽出。複数の動画(フォルダ可)は `probe_videos()` で `VideoSource` にまとめ、concat demuxer で 1 本として読む(`locate()` で通し秒 → ファイルと秒)
+- `ecorun/parallel.py` : `render_frames()` で描画を `--jobs` 個のプロセスに分ける。各ワーカーが `OverlayRenderer.from_spec()` で作り直し、共有メモリ(RawArray)のスロットに書く。キューで渡すのはスロット番号だけ(8 MB のフレームを pickle するとメインが詰まる)
 - `ecorun/cli.py` : `ecorun-overlay`(従来の CLI + `--preset` / `--debug-boxes`、`--video` は複数可、`--concat-only`、`--start` / `--end` で書き出し区間を動画の再生位置で指定)
 - `ecorun/timemap.py` : 動画秒 → ログ秒の対応 `TimeMap`(区間ごとに offset。従来の `--sync` は `TimeMap.constant`)と、OCR 結果 `OsdSegment` の JSON 入出力
 - `ecorun/ocrsync.py` : `ecorun-sync`。焼き込み日時(`OSD_TIME_BOX`)を Tesseract で読む → 差(焼き込み時刻 − 動画秒)が揃う連続を区間に → 境目を二分探索 → 秒の表示が変わるフレームで秒未満を補正。`--sync auto` / `--sync FILE.json` から使う
@@ -95,7 +97,7 @@ uv run pytest
 
 ## TODO・改善候補
 
-- 描画の高速化(クラウド環境で約 13 fps、Apple Silicon Mac で約 50 fps)。候補: 動的要素の部分領域だけ再描画する、multiprocessing でフレームを並列生成する、pycairo へ移行する
+- 描画の高速化の残り(Apple M5 で書き出し約 200 fps。上限は h264_videotoolbox の約 240 fps)。x264 の環境(クラウドなど)では x264 自体が律速なので `--x264-preset veryfast` が効く。候補: 残りの文字ウィジェット(env・timer)を値が変わったときだけ描き直す、pycairo へ移行する
 - 焼き込み日時の無い動画の同期: 動画のオプティカルフローから発進点を検出し、ログと突き合わせる(VSYSTO F9 の焼き込み日時は `--sync auto` で OCR 済み)
 - GUI: 配置禁止帯をキャンバス上でドラッグ編集できるようにする、複数ウィジェットの同時選択・整列
 - 勾配の表示(標高はグラフ表示済み。GPS 標高は 0.1 m 刻みで揺れるので平滑化が必要)

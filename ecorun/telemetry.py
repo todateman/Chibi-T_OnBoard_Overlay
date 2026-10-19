@@ -46,11 +46,12 @@ class Telemetry:
     t: np.ndarray            # ログ開始からの秒
     t0: pd.Timestamp         # ログ開始時刻
     df: pd.DataFrame
-    lap_starts: list         # [(lap_no, t_start)]
+    lap_starts: list         # [(lap_no, t_start)]。1 件目は走行開始時刻。走行していなければ空
     heading: np.ndarray      # 方位 deg(GPS から算出)
     has_fix: np.ndarray      # GPS 有効フラグ
     on_spans: list           # エンジンON区間 [(t_start, t_end)]
     rpm_on_threshold: float  # on_spans の算出に使った閾値
+    run_start: float | None = None  # 走行開始(ロガーの走行時間が 0 の時刻)。走行していなければ None
 
     def __post_init__(self):
         self._arr = {}
@@ -131,18 +132,25 @@ def load_log(path: str, rpm_on_threshold: float = 300,
     hd = np.where(ok, (np.degrees(np.arctan2(y, x)) + 360) % 360, np.nan)
     hd = pd.Series(hd).ffill().bfill().fillna(0).to_numpy()
 
-    laps = df["lap"].to_numpy()
-    lap_starts = [(int(laps[0]), t[0])]
-    for i in range(1, len(laps)):
-        if laps[i] != laps[i - 1]:
-            lap_starts.append((int(laps[i]), t[i]))
+    # 走行開始: ロガーの走行時間が 0 から動き出した行の t − 走行時間。
+    # 電源投入時から 1 周目になっているログもあるので、ラップタイムはここから数える
+    laps, run_t = df["lap"].to_numpy(), df["run_time"].to_numpy(dtype=float)
+    moving = np.flatnonzero(run_t > 0)
+    run_start, lap_starts = None, []
+    if len(moving):
+        i0 = moving[0]
+        run_start = float(max(t[i0] - run_t[i0], t[0]))
+        lap_starts = [(int(laps[i0]), run_start)]
+        for i in range(i0 + 1, len(laps)):
+            if laps[i] != laps[i - 1]:
+                lap_starts.append((int(laps[i]), t[i]))
 
     # エンジンON区間(ON の行 i について t[i-1]〜t[i] を ON とみなす)
     on = np.r_[0, (df["rpm"].to_numpy() > rpm_on_threshold).astype(int), 0]
     edges = np.diff(on)
     on_spans = [(t[max(s - 1, 0)], t[e - 1])
                 for s, e in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1))]
-    return Telemetry(t, t0, df, lap_starts, hd, has_fix, on_spans, rpm_on_threshold)
+    return Telemetry(t, t0, df, lap_starts, hd, has_fix, on_spans, rpm_on_threshold, run_start)
 
 
 def interp_angle(t: np.ndarray, a: np.ndarray, ts: float) -> float:

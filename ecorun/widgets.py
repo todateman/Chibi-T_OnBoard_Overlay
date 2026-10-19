@@ -103,7 +103,7 @@ class Timer(WidgetImpl):
         cur = [s for s in tel.lap_starts if s[1] <= ts]
         if cur and lap > 0:
             self.T(d, (x0 + S(260), y0 + S(40)), fmt_time(ts - cur[-1][1], ms=True), 42)
-            if len(cur) >= 3:  # 前周タイム
+            if len(cur) >= 2 and cur[-2][0] > 0:  # 前周タイム
                 prev = cur[-1][1] - cur[-2][1]
                 self.T(d, (self.x1 - S(15), y0 + S(12)), f"前周 {fmt_time(prev, ms=True)}", 18, c.sub, "ra")
         else:
@@ -349,20 +349,51 @@ class Gauge(WidgetImpl):
         img.alpha_composite(g.resize((2 * r, 2 * r), Image.LANCZOS), (self.cx - r, self.cy - r))
 
     def needle(self, img, val):
+        """値の弧と針。毎フレーム呼ばれるので、ゲージ全体の SS レイヤは作らない
+        (弧は 1 回だけ描いた 270° の弧を角度で切り、針は外接矩形だけを SS で描く)"""
         r, u = self.r, self.u
         R = r * SS
-        lay = Image.new("RGBA", (2 * R, 2 * R), (0, 0, 0, 0))
-        d = ImageDraw.Draw(lay)
         frac = max(0.0, min(1.0, val / self.cfg.max))
         if frac > 0.002:
-            d.arc((u(22), u(22), 2 * R - u(22), 2 * R - u(22)), 135, 135 + 270 * frac,
-                  fill=rgba(getattr(self.c, self.color_key), 255), width=u(18))
+            self._value_arc(img, 270 * frac)
         a = math.radians(135 + 270 * frac)
         # 目盛り数字と大きな数値を隠さない外周だけの短い針
-        d.line((R + (R - u(64)) * math.cos(a), R + (R - u(64)) * math.sin(a),
-                R + (R - u(14)) * math.cos(a), R + (R - u(14)) * math.sin(a)),
-               fill=(255, 255, 255, 255), width=u(6))
-        img.alpha_composite(lay.resize((2 * r, 2 * r), Image.LANCZOS), (self.cx - r, self.cy - r))
+        x0, y0 = R + (R - u(64)) * math.cos(a), R + (R - u(64)) * math.sin(a)
+        x1, y1 = R + (R - u(14)) * math.cos(a), R + (R - u(14)) * math.sin(a)
+        m = u(6) + 4 * SS                                # 線幅 + LANCZOS の裾
+        bx0, by0 = max(0, math.floor((min(x0, x1) - m) / SS)), max(0, math.floor((min(y0, y1) - m) / SS))
+        bx1, by1 = min(2 * r, math.ceil((max(x0, x1) + m) / SS)), min(2 * r, math.ceil((max(y0, y1) + m) / SS))
+        lay = Image.new("RGBA", ((bx1 - bx0) * SS, (by1 - by0) * SS), (0, 0, 0, 0))
+        ox, oy = bx0 * SS, by0 * SS
+        ImageDraw.Draw(lay).line((x0 - ox, y0 - oy, x1 - ox, y1 - oy), fill=(255, 255, 255, 255), width=u(6))
+        img.alpha_composite(lay.resize((bx1 - bx0, by1 - by0), Image.LANCZOS),
+                            (self.cx - r + bx0, self.cy - r + by0))
+
+    def _value_arc(self, img, sweep: float):
+        """135° から sweep 度ぶんの値の弧。境目は角度方向に 1 px 幅でぼかす"""
+        if getattr(self, "_arc", None) is None:
+            r, u = self.r, self.u
+            R = r * SS
+            lay = Image.new("RGBA", (2 * R, 2 * R), (0, 0, 0, 0))
+            ImageDraw.Draw(lay).arc((u(22), u(22), 2 * R - u(22), 2 * R - u(22)), 135, 405,
+                                    fill=rgba(getattr(self.c, self.color_key), 255), width=u(18))
+            full = np.array(lay.resize((2 * r, 2 * r), Image.LANCZOS))
+            ys, xs = np.nonzero(full[..., 3])
+            y0, x0 = ys.min(), xs.min()
+            dx, dy = xs + 0.5 - r, ys + 0.5 - r
+            # 135° を 0 とした時計回りの角度。下の空き(270〜360°)の中ほどで折り返し、始端の裾を負の側に残す
+            ang = (np.degrees(np.arctan2(dy, dx)) - 135 + 45) % 360 - 45
+            base = full[y0:ys.max() + 1, x0:xs.max() + 1].copy()
+            base[..., 3] = 0
+            self._arc = (base, (ys - y0, xs - x0), full[ys, xs, 3].astype(np.float32), ang,
+                         np.radians(1.0) * np.hypot(dx, dy), (x0, y0), full)
+        base, idx, alpha, ang, px_per_deg, (x0, y0), full = self._arc
+        if sweep >= 270:
+            img.alpha_composite(Image.fromarray(full), (self.cx - self.r, self.cy - self.r))
+            return
+        out = base.copy()
+        out[idx[0], idx[1], 3] = alpha * np.clip((sweep - ang) * px_per_deg + 0.5, 0.0, 1.0)
+        img.alpha_composite(Image.fromarray(out), (self.cx - self.r + x0, self.cy - self.r + y0))
 
 
 class SpeedGauge(Gauge):
