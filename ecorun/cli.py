@@ -91,11 +91,14 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--debug-boxes", action="store_true", help="各ウィジェットの枠と id、配置禁止帯を描く(--preview 向け)")
     ap.add_argument("--fps", type=float, default=FPS_DEFAULT)
     ap.add_argument("--font", help="日本語フォント (.ttf/.ttc) のパス(プリセットの theme.font より優先)")
-    ap.add_argument("--crf", type=int, default=18, help="H.264 の画質(x264 のとき。既定 18、小さいほど高画質)")
+    ap.add_argument("--crf", type=int, default=18,
+                    help="H.264 の画質(x264・nvenc のとき。既定 18、小さいほど高画質)")
     ap.add_argument("--encoder", choices=ENCODERS, default="auto",
-                    help="H.264 のエンコーダ。auto は macOS なら videotoolbox(ハードウェア)、それ以外は x264")
+                    help="H.264 のエンコーダ。auto は macOS なら videotoolbox、"
+                         "それ以外で NVIDIA GPU があれば nvenc(どちらも無ければ x264)")
     ap.add_argument("--x264-preset", choices=X264_PRESETS, default="medium",
-                    help="x264 の速さと圧縮率(既定 medium。veryfast なら約 2 倍速)")
+                    help="エンコードの速さと圧縮率(既定 medium。veryfast なら約 2 倍速。"
+                         "nvenc では対応する preset(p1〜p7)に変換される)")
     ap.add_argument("--jobs", type=int, default=default_jobs(),
                     help=f"描画のプロセス数(既定 {default_jobs()}。1 なら並列にしない)")
     add_ocr_args(ap, "--sync-step")
