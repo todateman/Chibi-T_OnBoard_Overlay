@@ -22,6 +22,9 @@
   # 7) 焼き込み日時を OCR して自動で同期(時刻の飛びごとに区間を分ける。要 Tesseract)
   ecorun-overlay LOG0650.CSV --preset f9_mask --video F9/ --sync auto -o out.mp4
   ecorun-overlay LOG0650.CSV --preset f9_mask --video F9/ --sync sync.json -o out.mp4   # ecorun-sync -o の結果
+
+  # 8) DJI のアクションカメラ(焼き込みなし)は、内蔵 IMU の加速度とログの速度の相関で自動同期(--sync auto でも同じ)
+  ecorun-overlay LOG0662.CSV --video DJI_20261024130355_0005_D.MP4 --sync imu -o out.mp4
 """
 from __future__ import annotations
 
@@ -80,7 +83,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="合成する車載動画。複数ファイル・フォルダを指定するとファイル名順に連結して 1 本として扱う")
     ap.add_argument("--concat-only", action="store_true", help="--video を連結しただけの動画を書き出す(オーバーレイなし・再エンコードなし)")
     ap.add_argument("--sync", help="動画 0 秒目に対応するログ時刻 (例 11:16:50) またはログ開始からの秒。"
-                                   "auto で焼き込み日時を OCR して自動同期、.json なら ecorun-sync の結果を使う")
+                                   "auto で自動同期(焼き込み日時の OCR。DJI のアクションカメラなら内蔵 IMU の加速度)、"
+                                   "imu で IMU に限定、.json なら ecorun-sync の結果を使う")
     ap.add_argument("--offset", type=float, default=0.0, help="同期の微調整 [秒]")
     ap.add_argument("--start", type=parse_position, metavar="POS",
                     help="書き出し開始位置。動画(連結後)の再生位置を 秒 か [H:]MM:SS で(既定 0)")
@@ -108,20 +112,26 @@ def build_parser() -> argparse.ArgumentParser:
 
 def build_timemap(sync: str | None, offset: float, tel: Telemetry, src: VideoSource | None,
                   step: float, box) -> TimeMap:
-    """--sync → 動画秒からログ秒への対応。auto / .json は焼き込み日時の区間ごと、それ以外は従来の 1 本の直線"""
+    """--sync → 動画秒からログ秒への対応。auto / imu / .json は区間ごと、それ以外は従来の 1 本の直線。
+    auto は DJI meta(IMU)のある動画なら加速度の相関、無ければ焼き込み日時の OCR"""
     s = (sync or "").strip()
-    if s.lower() == "auto" or s.lower().endswith(".json"):
-        if s.lower() == "auto":
+    if s.lower() in ("auto", "imu") or s.lower().endswith(".json"):
+        label = "焼き込み時刻"
+        if s.lower() in ("auto", "imu"):
             if src is None:
-                raise SyncError("--sync auto には --video が必要です")
-            segs = detect_cli(src, step, box)
+                raise SyncError(f"--sync {s.lower()} には --video が必要です")
+            from . import imusync
+            if s.lower() == "imu" or imusync.has_imu(src):
+                segs, label = imusync.detect_cli(src, tel), "ログの時刻"
+            else:
+                segs = detect_cli(src, step, box)
         else:
             try:
                 segs = osd_from_json(s)
             except (OSError, ValueError, KeyError) as e:
                 raise SyncError(f"同期ファイルを読めません: {s}: {e}") from None
         t0 = tel.t0.to_pydatetime()
-        print(describe(segs, t0))
+        print(describe(segs, t0, label))
         for w in check_against_log(segs, t0, float(tel.t[-1])):
             print("警告: " + w, file=sys.stderr)
         tm = TimeMap.from_osd(segs, t0)
@@ -134,7 +144,7 @@ def main(argv=None):
     ap = build_parser()
     args = ap.parse_args(argv)
     src = None
-    if args.video and (args.preview is None or (args.sync or "").strip().lower() == "auto"):
+    if args.video and (args.preview is None or (args.sync or "").strip().lower() in ("auto", "imu")):
         try:
             src = probe_videos(args.video)
         except VideoError as e:

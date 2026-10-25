@@ -288,22 +288,33 @@ def get_video_file(video: list[str] = Query(description=VIDEO_DESC), i: int = Qu
 
 class AutoSyncBody(BaseModel):
     video: list[str] = Field(description=VIDEO_DESC)
-    csv: str | None = Field(None, description="CSV のパス。指定するとログ秒(offset)と範囲の検査を返す")
+    csv: str | None = Field(None, description="CSV のパス。指定するとログ秒(offset)と範囲の検査を返す(IMU で同期するときは必須)")
     step: float = Field(10.0, gt=0, description="焼き込みを読む間隔 [秒](ecorun-sync --step と同じ)")
 
 
-@app.post("/api/auto-sync", summary="焼き込み日時を OCR して区間ごとの同期を求める(長い動画では数十秒かかる)")
+@app.post("/api/auto-sync", summary="区間ごとの同期を求める。焼き込み日時の OCR か、DJI のアクションカメラなら内蔵 IMU の加速度"
+                                    "(長い動画では数十秒かかる)")
 def auto_sync(body: AutoSyncBody):
+    from .. import imusync
     from ..ocrsync import SyncError, check_against_log, detect
     vkey, src = _video_source(body.video)
+    # t0 と速度だけ使うので閾値は何でもよい
+    tel = _telemetry(body.csv, 300, 3.0) if body.csv else None
     try:
-        segs = _sync_cache.get_or((vkey, body.step), lambda: detect(src, body.step))
+        method = "imu" if _sync_cache.get_or((vkey, "has_imu"), lambda: imusync.has_imu(src)) else "ocr"
+        if method == "imu":
+            if tel is None:
+                raise SyncError("IMU で同期するにはログ(CSV)の指定が必要です")
+            p = _resolve_file(body.csv, "CSV ")
+            segs = _sync_cache.get_or((vkey, "imu", str(p), p.stat().st_mtime), lambda: imusync.detect(src, tel))
+        else:
+            segs = _sync_cache.get_or((vkey, body.step), lambda: detect(src, body.step))
     except SyncError as e:
         raise HTTPException(422, str(e)) from None
-    out = {"segments": [{"v0": s.v0, "v1": s.v1, "wall": s.wall0.isoformat(timespec="milliseconds")} for s in segs],
+    out = {"method": method,
+           "segments": [{"v0": s.v0, "v1": s.v1, "wall": s.wall0.isoformat(timespec="milliseconds")} for s in segs],
            "warnings": []}
-    if body.csv:
-        tel = _telemetry(body.csv, 300, 3.0)          # t0 だけ使うので閾値は何でもよい
+    if tel is not None:
         t0 = tel.t0.to_pydatetime()
         try:
             out["warnings"] = check_against_log(segs, t0, float(tel.t[-1]))

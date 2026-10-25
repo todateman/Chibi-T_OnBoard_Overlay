@@ -474,22 +474,23 @@ async function autoSync() {
   const btn = $("btnAutoSync");
   btn.disabled = true;
   btn.textContent = "解析中…";
-  status("焼き込み日時を読み取っています(長い動画では数十秒かかります)", 0);
+  status("同期を解析しています(焼き込み日時の OCR か IMU。長い動画では数十秒かかります)", 0);
   try {
     const r = await api("POST", "/api/auto-sync", { video: videoList(), csv: S.csv });
     S.timemap = { key: S.video, segments: r.segments };
     S.sync = "auto";
     $("syncInput").value = "auto";
     const n = r.segments.length;
-    status(`自動同期: ${n} 区間` + (r.warnings.length ? `(${r.warnings.join(" / ")})` : ""), r.warnings.length ? 0 : 4000);
+    const how = r.method === "imu" ? "IMU" : "OCR";
+    status(`自動同期(${how}): ${n} 区間` + (r.warnings.length ? `(${r.warnings.join(" / ")})` : ""), r.warnings.length ? 0 : 4000);
     $("syncInput").title = r.segments.map((g, i) =>
-      `区間 ${i + 1}: 動画 ${g.v0.toFixed(2)}〜${g.v1.toFixed(2)} s  焼き込み ${g.wall.replace("T", " ")}`).join("\n");
+      `区間 ${i + 1}: 動画 ${g.v0.toFixed(2)}〜${g.v1.toFixed(2)} s  ${r.method === "imu" ? "ログの時刻" : "焼き込み"} ${g.wall.replace("T", " ")}`).join("\n");
     saveLocal(); syncTimeline(); updateBackground(); scheduleRender(0); drawCommand();
   } catch (e) {
     status(`自動同期できません: ${e.message}`, 0);
   } finally {
     btn.disabled = false;
-    btn.textContent = "OCR で自動同期";
+    btn.textContent = "自動同期";
   }
 }
 async function loadVideo() {
