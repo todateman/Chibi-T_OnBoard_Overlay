@@ -5,7 +5,7 @@ from datetime import datetime
 import pytest
 
 from ecorun.cli import main
-from ecorun.ocrsync import SyncError, check_against_log, detect, main as sync_main, parse_osd
+from ecorun.ocrsync import SyncError, _drop_sandwiched, check_against_log, detect, main as sync_main, parse_osd
 from ecorun.timemap import OsdSegment, TimeMap, osd_from_json
 from ecorun.video import probe
 
@@ -34,6 +34,16 @@ def test_check_against_log():
     assert len(warns) == 1 and "区間 2" in warns[0]
     with pytest.raises(SyncError, match="タイムゾーン"):    # ちょうど 9 時間ずれ
         check_against_log([OsdSegment(0, 10, datetime(2026, 10, 10, 6, 1))], t0, 600)
+
+
+def test_drop_sandwiched():
+    run = lambda v0, v1, d: [(float(v), d + 0.3 * (v % 2)) for v in range(v0, v1, 5)]  # noqa: E731
+    # 1 分の桁を 2 分少なく読み続けた区間(前後の差は揃っている)は捨てる
+    runs = _drop_sandwiched([run(0, 100, 10.0), run(100, 125, -110.0), run(125, 200, 10.2)])
+    assert len(runs) == 1 and len(runs[0]) == 35
+    # 録画の欠けで差が増えていく区間は残す
+    runs = [run(0, 100, 10.0), run(100, 125, 40.0), run(125, 200, 70.0)]
+    assert _drop_sandwiched(runs) == runs
 
 
 @needs_tools
