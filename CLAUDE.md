@@ -104,6 +104,7 @@ uv run pytest
 ## TODO・改善候補
 
 - 描画の高速化の残り(Apple M5 で書き出し約 200 fps。上限は h264_videotoolbox の約 240 fps)。x264 の環境(クラウドなど)では x264 自体が律速なので `--x264-preset veryfast` が効く。候補: 残りの文字ウィジェット(env・timer)を値が変わったときだけ描き直す、pycairo へ移行する
+- 開発機(Linux, 16 コア, NVIDIA GPU)での目安: ダミーデータ(合成 CSV・1920×1080 30fps)で `--encoder auto` は h264_nvenc を自動選択。`--jobs 4〜8` で約 85 fps。x264 medium(既定)は jobs 4 で頭打ち約 70 fps、`--x264-preset veryfast`/`ultrafast` なら x264 でも約 80〜85 fps まで伸びる。この条件では Pillow 側の描画が律速で nvenc と x264 ultrafast の差が出にくい(実写映像はより圧縮に時間がかかるため、nvenc の優位がもっと出る見込み)
 - 焼き込み日時の無い動画の同期: 動画のオプティカルフローから発進点を検出し、ログと突き合わせる(VSYSTO F9 の焼き込み日時は `--sync auto` で OCR 済み)
 - GUI: 配置禁止帯をキャンバス上でドラッグ編集できるようにする、複数ウィジェットの同時選択・整列
 - 勾配の表示(標高はグラフ表示済み。GPS 標高は 0.1 m 刻みで揺れるので平滑化が必要)

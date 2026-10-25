@@ -93,11 +93,14 @@ def test_encode_parallel(seg_dir, tel, tmp_path, encoder):
 
 def test_resolve_encoder():
     assert resolve_encoder("x264") == "x264"
-    assert resolve_encoder("auto") in ("x264", "videotoolbox")
+    assert resolve_encoder("nvenc") == "nvenc"
+    assert resolve_encoder("auto") in ("x264", "videotoolbox", "nvenc")
     assert h264_args("x264", 20, "veryfast") == ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
     assert h264_args("videotoolbox")[1] == "h264_videotoolbox"
+    assert h264_args("nvenc", 20, "veryfast") == \
+        ["-c:v", "h264_nvenc", "-preset", "p2", "-rc", "vbr", "-cq", "20", "-b:v", "0"]
     with pytest.raises(ValueError):
-        resolve_encoder("nvenc")
+        resolve_encoder("vaapi")
 
 
 def test_single_file_source(seg_dir):

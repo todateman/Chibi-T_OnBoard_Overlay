@@ -26,10 +26,16 @@ from .render import OverlayRenderer
 from .timemap import TimeMap
 
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".ts"}
-ENCODERS = ("auto", "x264", "videotoolbox")
+ENCODERS = ("auto", "x264", "videotoolbox", "nvenc")
 X264_PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow")
 # h264_videotoolbox の固定品質(1〜100、大きいほど高画質)。65 で元動画(F9、約 4.4 Mbps)に対し約 8 Mbps
 VT_QUALITY = 65
+# --x264-preset(x264 の 9 段階)→ h264_nvenc の preset(p1 最速〜p7 最高画質)への対応
+NVENC_PRESETS = {
+    "ultrafast": "p1", "superfast": "p1", "veryfast": "p2", "faster": "p2",
+    "fast": "p3", "medium": "p4", "slow": "p5", "slower": "p6", "veryslow": "p7",
+}
+
 # 音声は AAC で再エンコードする。F9 の .TS は壊れた ADTS フレームが混ざっていて、
 # -c:a copy だと mp4 への mux(aac_adtstoasc)で ffmpeg が途中で止まる。デコーダは壊れたフレームを読み飛ばせる
 AUDIO_ARGS = ["-c:a", "aac", "-b:a", "192k"]
@@ -173,19 +179,27 @@ def _ffmpeg_encoders() -> str:
 
 
 def resolve_encoder(name: str = "auto") -> str:
-    """--encoder → "x264" か "videotoolbox"。auto は macOS で h264_videotoolbox が使えればそちら
-    (libx264 medium は 1080p で約 70 fps が上限で、描画と CPU を取り合う。videotoolbox は約 240 fps)"""
+    """--encoder → "x264" / "videotoolbox" / "nvenc"。auto は macOS で h264_videotoolbox が使えればそちら、
+    それ以外で h264_nvenc(NVIDIA GPU)が使えればそちら、どちらも無ければ x264
+    (libx264 medium は 1080p で約 70 fps が上限で、描画と CPU を取り合う。videotoolbox・nvenc は約 200〜240 fps)"""
     if name not in ENCODERS:
         raise ValueError(f"未知のエンコーダ: {name}")
     if name == "auto":
-        ok = sys.platform == "darwin" and "h264_videotoolbox" in _ffmpeg_encoders()
-        return "videotoolbox" if ok else "x264"
+        encs = _ffmpeg_encoders()
+        if sys.platform == "darwin" and "h264_videotoolbox" in encs:
+            return "videotoolbox"
+        if sys.platform != "darwin" and "h264_nvenc" in encs:
+            return "nvenc"
+        return "x264"
     return name
 
 
 def h264_args(encoder: str, crf: int = 18, x264_preset: str = "medium") -> list[str]:
     if encoder == "videotoolbox":
         return ["-c:v", "h264_videotoolbox", "-q:v", str(VT_QUALITY)]
+    if encoder == "nvenc":
+        return ["-c:v", "h264_nvenc", "-preset", NVENC_PRESETS.get(x264_preset, "p4"),
+                "-rc", "vbr", "-cq", str(crf), "-b:v", "0"]
     return ["-c:v", "libx264", "-preset", x264_preset, "-crf", str(crf)]
 
 
