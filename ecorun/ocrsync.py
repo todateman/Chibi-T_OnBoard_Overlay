@@ -155,7 +155,7 @@ def _detect(src: VideoSource, read, vs: list[float], ex: ThreadPoolExecutor, say
 
     runs = _group(samples)
     if len(runs) > 1:
-        runs = _group([p for r in runs if len(r) > 1 or confirmed(*r[0]) for p in r])
+        runs = _drop_sandwiched(_group([p for r in runs if len(r) > 1 or confirmed(*r[0]) for p in r]))
 
     # 3) 区間の境目を二分探索で 1 フレームまで詰める。分割ファイルの境目の近くならそこに合わせる
     def cut(ab):
@@ -207,6 +207,18 @@ def _group(samples: list[tuple[float, float]]) -> list[list[tuple[float, float]]
         else:
             runs.append([(v, d)])
     return runs
+
+
+def _drop_sandwiched(runs: list[list[tuple[float, float]]]) -> list[list[tuple[float, float]]]:
+    """前後の区間の差が揃っているのに、間だけ差が違う区間を誤読として捨てる。
+    録画の欠けなら差は増える一方で元の差には戻らないので、間の区間は同じ桁を読み続けた誤読
+    (2026/10/25 茂木の F9 で「12:55」を 25 秒間「12:53」と読んだ)"""
+    while True:
+        k = next((k for k in range(1, len(runs) - 1)
+                  if abs(_mid(runs[k - 1]) - _mid(runs[k + 1])) <= JUMP_TOL), None)
+        if k is None:
+            return runs
+        runs = _group([p for i, r in enumerate(runs) if i != k for p in r])
 
 
 def _find_cut(read, lo: float, hi: float, d_lo: float, d_hi: float, eps: float) -> float:

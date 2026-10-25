@@ -30,6 +30,9 @@ ENCODERS = ("auto", "x264", "videotoolbox")
 X264_PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow")
 # h264_videotoolbox の固定品質(1〜100、大きいほど高画質)。65 で元動画(F9、約 4.4 Mbps)に対し約 8 Mbps
 VT_QUALITY = 65
+# 音声は AAC で再エンコードする。F9 の .TS は壊れた ADTS フレームが混ざっていて、
+# -c:a copy だと mp4 への mux(aac_adtstoasc)で ffmpeg が途中で止まる。デコーダは壊れたフレームを読み飛ばせる
+AUDIO_ARGS = ["-c:a", "aac", "-b:a", "192k"]
 
 
 class VideoError(Exception):
@@ -37,13 +40,15 @@ class VideoError(Exception):
 
 
 def expand_videos(paths: Sequence[str]) -> list[str]:
-    """ファイルはそのまま、フォルダは直下の動画をファイル名順に展開する"""
+    """ファイルはそのまま、フォルダは直下の動画をファイル名順に展開する。
+    フォルダからは書き出した結果(GUI の既定の出力名「名前_overlay.mp4」)を除く"""
     files: list[str] = []
     for s in paths:
         p = Path(s).expanduser()
         if p.is_dir():
             found = sorted((c for c in p.iterdir() if c.is_file() and c.suffix.lower() in VIDEO_EXTS
-                            and not c.name.startswith(".")), key=lambda c: c.name)
+                            and not c.name.startswith(".") and not c.stem.endswith("_overlay")),
+                           key=lambda c: c.name)
             if not found:
                 raise VideoError(f"フォルダに動画がありません: {s}")
             files += [str(c) for c in found]
@@ -133,7 +138,7 @@ def concat_only(src: VideoSource, out_path: str):
         sys.exit("ffmpeg が見つかりません")
     with input_args(src) as inp:
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *inp, "-map", "0:v", "-map", "0:a?",
-                        "-c", "copy", "-movflags", "+faststart", out_path], check=True)
+                        "-c:v", "copy", *AUDIO_ARGS, "-movflags", "+faststart", out_path], check=True)
 
 
 def probe(video: str):
@@ -218,7 +223,7 @@ def _encode(r: OverlayRenderer, out_path: str, tm: TimeMap, duration: float, fps
         seek = ["-ss", f"{start:.3f}"] if start > 0 else []
         cmd = ["ffmpeg", "-y", "-loglevel", "error", *seek, *video_in, *raw_in,
                "-filter_complex", f"[1:v]scale={vw}:{vh}:flags=lanczos[ov];[0:v][ov]overlay=0:0:shortest=1[v]",
-               "-map", "[v]", "-map", "0:a?", *venc, "-pix_fmt", "yuv420p", "-c:a", "copy",
+               "-map", "[v]", "-map", "0:a?", *venc, "-pix_fmt", "yuv420p", *AUDIO_ARGS,
                "-frames:v", str(n_out), "-t", f"{duration + 0.5 / fps:.3f}", out_path]
     else:
         cmd = ["ffmpeg", "-y", "-loglevel", "error", *raw_in,
@@ -250,5 +255,7 @@ def _encode(r: OverlayRenderer, out_path: str, tm: TimeMap, duration: float, fps
             except BrokenPipeError:
                 pass
         proc.wait()
+    if proc.returncode != 0:
+        sys.exit(f"\nffmpeg が失敗しました(終了コード {proc.returncode}、{k + 1}/{n_frames} 枚目まで)")
     el = time.time() - t_wall
     print(f"\n{k + 1} frames in {el:.1f}s ({(k + 1) / max(el, 1e-6):.1f} fps)")

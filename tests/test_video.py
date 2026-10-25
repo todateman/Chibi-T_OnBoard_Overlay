@@ -17,6 +17,14 @@ pytestmark = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg が�
 def test_expand_videos(seg_dir, tmp_path):
     files = expand_videos([str(seg_dir)])
     assert [f.rsplit("/", 1)[1] for f in files] == ["F9_0000.MP4", "F9_0001.MP4", "F9_0002.MP4"]
+    # 同じフォルダに書き出した結果は連結しない(明示すれば読める)
+    out = seg_dir / "F9_0000_overlay.mp4"
+    shutil.copy(files[0], out)
+    try:
+        assert expand_videos([str(seg_dir)]) == files
+        assert expand_videos([str(out)]) == [str(out)]
+    finally:
+        out.unlink()
     # ファイルは指定順のまま
     assert expand_videos([files[2], files[0]]) == [files[2], files[0]]
     (tmp_path / "x.CSV").write_text("a")
