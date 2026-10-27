@@ -20,7 +20,8 @@ Honda エコマイレッジチャレンジ(チーム: ちびTインターナシ�
 - `ecorun/parallel.py` : `render_frames()` で描画を `--jobs` 個のプロセスに分ける。各ワーカーが `OverlayRenderer.from_spec()` で作り直し、共有メモリ(RawArray)のスロットに書く。キューで渡すのはスロット番号だけ(8 MB のフレームを pickle するとメインが詰まる)
 - `ecorun/cli.py` : `ecorun-overlay`(従来の CLI + `--preset` / `--debug-boxes`、`--video` は複数可、`--concat-only`、`--start` / `--end` で書き出し区間を動画の再生位置で指定)
 - `ecorun/timemap.py` : 動画秒 → ログ秒の対応 `TimeMap`(区間ごとに offset。従来の `--sync` は `TimeMap.constant`)と、OCR 結果 `OsdSegment` の JSON 入出力
-- `ecorun/ocrsync.py` : `ecorun-sync`。焼き込み日時(`OSD_TIME_BOX`)を Tesseract で読む → 差(焼き込み時刻 − 動画秒)が揃う連続を区間に → 境目を二分探索 → 秒の表示が変わるフレームで秒未満を補正。`--sync auto` / `--sync FILE.json` から使う
+- `ecorun/ocrsync.py` : `ecorun-sync`。焼き込み日時(`OSD_TIME_BOX`)を Tesseract で読む → 差(焼き込み時刻 − 動画秒)が揃う連続を区間に → 境目を二分探索 → 秒の表示が変わるフレームで秒未満を補正。`--sync auto` / `--sync FILE.json` から使う。`--method auto` なら DJI meta のある動画は imusync へ
+- `ecorun/imusync.py` : DJI のアクションカメラ用。`DJI meta`(djmd)の protobuf からフレームごとの姿勢と加速度を読み、前後加速度とログの速度の微分の相互相関(マスク付き NCC を FFT で)でずれを求める。結果は ocrsync と同じ `OsdSegment`(1 ファイル = 1 区間)。`--sync auto` は全ファイルに djmd があればこちら、`--sync imu` で明示
 - `ecorun/layout.py` : `ecorun-layout`(list / widgets / schema / validate / lint)。lint のルールもここ
 - `ecorun/gui/server.py` + `static/` : `ecorun-gui`。FastAPI + ビルド不要の素の JS。プレビューは `/api/render` で本番と同じ描画。`/api/events`(SSE)で presets/ の外部変更を通知。再生中の背景は `/api/video-file` を `<video>` で流し、一時停止中は `/api/frame` の静止画
 - `ecorun/gui/export.py` : GUI の「書き出し」。`/api/export` が画面のプリセット(と OCR の区間)を一時ファイルに書き、`python -m ecorun.cli` を別プロセスで実行して進捗(`N/M frames ETA`)を読む。1 本ずつ、中止はプロセスグループごと
@@ -67,6 +68,14 @@ Honda エコマイレッジチャレンジ(チーム: ちびTインターナシ�
 - 音声に壊れた ADTS フレームが混ざる → `-c:a copy` で mp4 に入れると途中で止まるので、音声は AAC で再エンコードする(`AUDIO_ARGS`)
 - 焼き込みは分割の境目でも連続(録画の欠けなし)。OCR で「12:55」を 25 秒間「12:53」と読み続けた区間があった → 前後の区間の差が揃っていれば間の区間は誤読として捨てる(`_drop_sandwiched`)
 
+### DJI Osmo Action 4(2026/10/24 茂木、`DJI_20261024130355_0005_D.MP4`、リポジトリ外)
+
+- 2688×1512 HEVC Main10、59.94p。運転席向きのコクピットカメラで、ロガーの表示器(速度・経過時間)が映る → 同期の目視確認に使える
+- 焼き込み日時なし。`creation_time` は 1 秒単位で、カメラの時計がロガーより 4 分 36 秒進んでいた。`timecode` は時刻ではない
+- `DJI meta`(codec tag `djmd`)のパケットがフレームごとにあり、field 3 = `{1: {1: フレーム番号, 2: µs}, 2: {9: 姿勢 (w,x,y,z), 10: 加速度 {2,3,4} [g]}}`。proto3 なので 0 の成分は省かれる。姿勢は機体 → 世界(世界 z が鉛直、重力は (0,0,−1) g)。カメラの +x が前方
+- ヨー角と GPS 方位、振動レベルと rpm の相関は山がぼやける(±数秒)。前後加速度と速度の微分が r ≈ 0.65 で鋭い
+- この日のログ(LOG0662)はログ 1350 秒付近から GPS の位置が固まっている。速度は続いている
+
 ## レイアウトの方針(VSYSTO F9 ドラレコ、1920×1080、ローアングル前方カメラ)
 
 - 地平線付近の帯(y≈380〜640)はコース前方・マーシャル・前走車が映るので、何も置かない → 各プリセットの `[[keepout]]` に入れてあり、`ecorun-layout lint` が重なりを警告する
@@ -92,7 +101,7 @@ uv run ecorun-overlay sampledata/LOG0650.CSV --preset f9_mask --video sample.mp4
 uv run ecorun-overlay sampledata/LOG0650.CSV --preset f9_mask --video sample.mp4 --sync 15:12:20 --start 1:00 --end 1:10 -o test.mp4
 # 分割動画はフォルダか複数ファイルで(連結だけなら --concat-only)
 uv run ecorun-overlay sampledata/LOG0650.CSV --preset f9_mask --video F9/ --sync 15:12:20 -o test.mp4
-# 焼き込み日時の OCR で自動同期(要 tesseract)。区間の表だけ見るなら ecorun-sync
+# 焼き込み日時の OCR で自動同期(要 tesseract)。区間の表だけ見るなら ecorun-sync。DJI の動画なら IMU で同期(--csv 必須)
 uv run ecorun-sync F9/ --csv sampledata/LOG0650.CSV -o sync.json   # --save-crop crop.png で枠の確認
 uv run ecorun-overlay sampledata/LOG0650.CSV --preset f9_mask --video F9/ --sync sync.json -o test.mp4
 
@@ -105,7 +114,8 @@ uv run pytest
 
 - 描画の高速化の残り(Apple M5 で書き出し約 200 fps。上限は h264_videotoolbox の約 240 fps)。x264 の環境(クラウドなど)では x264 自体が律速なので `--x264-preset veryfast` が効く。候補: 残りの文字ウィジェット(env・timer)を値が変わったときだけ描き直す、pycairo へ移行する
 - 開発機(Linux, 16 コア, NVIDIA GPU)での目安: ダミーデータ(合成 CSV・1920×1080 30fps)で `--encoder auto` は h264_nvenc を自動選択。`--jobs 4〜8` で約 85 fps。x264 medium(既定)は jobs 4 で頭打ち約 70 fps、`--x264-preset veryfast`/`ultrafast` なら x264 でも約 80〜85 fps まで伸びる。この条件では Pillow 側の描画が律速で nvenc と x264 ultrafast の差が出にくい(実写映像はより圧縮に時間がかかるため、nvenc の優位がもっと出る見込み)
-- 焼き込み日時の無い動画の同期: 動画のオプティカルフローから発進点を検出し、ログと突き合わせる(VSYSTO F9 の焼き込み日時は `--sync auto` で OCR 済み)
+- 焼き込み日時も IMU も無い動画の同期: 動画のオプティカルフローから発進点を検出し、ログと突き合わせる(VSYSTO F9 は OCR、DJI Action 4 は IMU で `--sync auto` 対応済み)
+- DJI のコクピット映像向けのプリセット(ドライバー・表示器を避けた配置)
 - GUI: 配置禁止帯をキャンバス上でドラッグ編集できるようにする、複数ウィジェットの同時選択・整列
 - 勾配の表示(標高はグラフ表示済み。GPS 標高は 0.1 m 刻みで揺れるので平滑化が必要)
   

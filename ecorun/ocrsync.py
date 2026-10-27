@@ -9,6 +9,9 @@ OCR は Tesseract(外部コマンド)。ffmpeg と同じく subprocess で呼ぶ
   ecorun-sync F9/ --csv LOG0650.CSV -o sync.json
   ecorun-overlay LOG0650.CSV --video F9/ --sync sync.json -o out.mp4   # 保存した結果で書き出す
   ecorun-overlay LOG0650.CSV --video F9/ --sync auto -o out.mp4        # その場で OCR して書き出す
+
+DJI のアクションカメラ(焼き込みなし)は、内蔵 IMU の加速度で同期する(imusync.py。--method auto なら自動で選ぶ):
+  ecorun-sync DJI_20261024130355_0005_D.MP4 --csv LOG0662.CSV -o sync.json
 """
 from __future__ import annotations
 
@@ -308,9 +311,9 @@ def check_against_log(segs: list[OsdSegment], t0: datetime, t_end: float) -> lis
     return warns
 
 
-def describe(segs: list[OsdSegment], t0: datetime | None = None) -> str:
-    """区間の表(人が読む用)"""
-    rows = ["区間  動画位置 [s]            焼き込み時刻(区間の先頭)" + ("   ログ秒" if t0 else "")]
+def describe(segs: list[OsdSegment], t0: datetime | None = None, label: str = "焼き込み時刻") -> str:
+    """区間の表(人が読む用)。label は時刻の列の名前(IMU で同期したときは推定した時刻)"""
+    rows = [f"区間  動画位置 [s]            {label}(区間の先頭)" + ("   ログ秒" if t0 else "")]
     for k, s in enumerate(segs, 1):
         log = f"   {(s.wall0 - t0).total_seconds():9.2f}" if t0 else ""
         rows.append(f"{k:4d}  {s.v0:9.2f} – {s.v1:9.2f}    {s.wall0:%Y-%m-%d %H:%M:%S.%f}"[:-4] + log)
@@ -340,9 +343,12 @@ def main(argv=None):
     from .telemetry import LogFormatError, load_log
     from .timemap import osd_to_json
 
-    ap = argparse.ArgumentParser(prog="ecorun-sync", description="車載動画の焼き込み日時を OCR してログと同期する")
+    ap = argparse.ArgumentParser(prog="ecorun-sync",
+                                 description="車載動画の焼き込み日時を OCR して(DJI のアクションカメラなら内蔵 IMU の加速度で)ログと同期する")
     ap.add_argument("video", nargs="+", help="車載動画(複数ファイル・フォルダはファイル名順に連結)")
-    ap.add_argument("--csv", help="ロガーの CSV。指定するとログ秒と範囲の検査を出す")
+    ap.add_argument("--csv", help="ロガーの CSV。指定するとログ秒と範囲の検査を出す(IMU で同期するときは必須)")
+    ap.add_argument("--method", choices=("auto", "ocr", "imu"), default="auto",
+                    help="同期の方法。auto は全ファイルに DJI meta(IMU)があれば imu、無ければ ocr(既定 auto)")
     ap.add_argument("-o", "--output", help="結果を JSON に保存(ecorun-overlay --sync FILE.json で使う)")
     add_ocr_args(ap, "--step")
     ap.add_argument("--save-crop", metavar="PNG", help="先頭付近の切り出し画像と 2 値化後の画像を保存(枠の確認用)")
@@ -359,10 +365,19 @@ def main(argv=None):
             both.paste(b, (0, a.height + 8))
             both.save(args.save_crop)
             print(f"切り出し → {args.save_crop}  OCR: {ocr(b).strip()!r}")
-        segs = detect_cli(src, args.step, args.osd_box)
+        from . import imusync
+        method = args.method
+        if method == "auto":
+            method = "imu" if imusync.has_imu(src) else "ocr"
         tel = load_log(args.csv) if args.csv else None
+        if method == "imu":
+            if tel is None:
+                sys.exit("IMU で同期するには --csv でログを指定してください(加速度をログの速度と突き合わせるため)")
+            segs = imusync.detect_cli(src, tel)
+        else:
+            segs = detect_cli(src, args.step, args.osd_box)
         t0 = tel.t0.to_pydatetime() if tel else None
-        print(describe(segs, t0))
+        print(describe(segs, t0, "ログの時刻" if method == "imu" else "焼き込み時刻"))
         if tel:
             for w in check_against_log(segs, t0, float(tel.t[-1])):
                 print("警告: " + w, file=sys.stderr)
